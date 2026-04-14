@@ -10,6 +10,7 @@ pub mod chain;
 pub mod config;
 pub mod forward;
 pub mod models;
+pub mod relay;
 pub mod reverse;
 pub mod socks5;
 

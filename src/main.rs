@@ -2356,12 +2356,11 @@ fn run_tunnel(
         TunnelType::Chain => 8080,
     });
 
-    let local_addr =
-        format!("127.0.0.1:{}", local_port)
-            .parse()
-            .map_err(|_| FlyWheelError::Other {
-                message: format!("无效的本地端口: {}", local_port),
-            })?;
+    let local_addr_str = format!("127.0.0.1:{}", local_port);
+    let local_addr = local_addr_str.parse()
+        .map_err(|_| FlyWheelError::Other {
+            message: format!("无效的本地地址: {}", local_addr_str),
+        })?;
 
     // 创建配置
     let mut config = TunnelConfig::new(tunnel_type_enum, local_addr)

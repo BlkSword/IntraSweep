@@ -5,6 +5,7 @@
 use crate::core::error::{FlyWheelError, Result};
 use crate::tunnel::config::TunnelConfig;
 use crate::tunnel::models::{ConnectionInfo, TunnelEvent, TunnelEventHandler, TunnelStatus};
+use crate::tunnel::relay;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -37,7 +38,10 @@ impl ChainTunnel {
         self.config.validate()
             .map_err(|e| FlyWheelError::Other { message: e })?;
 
-        let target = self.config.remote_target.clone().unwrap();
+        let target = self.config.remote_target.clone()
+            .ok_or_else(|| FlyWheelError::Other {
+                message: "链式隧道需要指定最终目标".to_string(),
+            })?;
 
         {
             let mut status = self.status.write().await;
@@ -112,7 +116,7 @@ impl ChainTunnel {
                         match result {
                             Ok(target_stream) => {
                                 // 双向转发
-                                let stats = Self::relay(client, target_stream).await;
+                                let stats = relay::relay(client, target_stream).await;
 
                                 {
                                     let mut st = status.write().await;
@@ -185,11 +189,7 @@ impl ChainTunnel {
 
         // 对于后续跳板，通过前一个跳板连接
         for (i, hop) in hops.iter().skip(1).enumerate() {
-            // 这里实现一个简化的协议
-            // 实际应用中需要更复杂的协议来处理多级跳板
-
             // 发送连接下一个跳板的指令
-            // 格式: 0x10 + 地址长度(1字节) + 地址 + 端口(2字节)
             let addr_parts: Vec<&str> = hop.split(':').collect();
             if addr_parts.len() != 2 {
                 return Err(FlyWheelError::Other {
@@ -215,7 +215,7 @@ impl ChainTunnel {
                 });
             }
 
-            // 读取响应 (简化版，实际需要超时)
+            // 读取响应
             let mut resp = [0u8; 1];
             if let Err(e) = current_stream.read_exact(&mut resp).await {
                 return Err(FlyWheelError::Other {
@@ -277,53 +277,6 @@ impl ChainTunnel {
         Ok(current_stream)
     }
 
-    /// 双向流量转发
-    async fn relay(mut client: TcpStream, mut target: TcpStream) -> TransferStats {
-        let mut client_buf = vec![0u8; 8192];
-        let mut target_buf = vec![0u8; 8192];
-        let mut sent = 0u64;
-        let mut received = 0u64;
-
-        loop {
-            tokio::select! {
-                result = client.read(&mut client_buf) => {
-                    match result {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            if let Err(e) = target.write_all(&client_buf[..n]).await {
-                                eprintln!("[错误] 写入目标失败: {}", e);
-                                break;
-                            }
-                            sent += n as u64;
-                        }
-                        Err(e) => {
-                            eprintln!("[错误] 读取客户端失败: {}", e);
-                            break;
-                        }
-                    }
-                }
-                result = target.read(&mut target_buf) => {
-                    match result {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            if let Err(e) = client.write_all(&target_buf[..n]).await {
-                                eprintln!("[错误] 写入客户端失败: {}", e);
-                                break;
-                            }
-                            received += n as u64;
-                        }
-                        Err(e) => {
-                            eprintln!("[错误] 读取目标失败: {}", e);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        TransferStats { sent, received }
-    }
-
     /// 获取隧道状态
     #[allow(dead_code)]
     pub async fn get_status(&self) -> TunnelStatus {
@@ -337,13 +290,6 @@ impl ChainTunnel {
         status.stop();
         self.event_handler.on_event(TunnelEvent::Stopped);
     }
-}
-
-/// 传输统计
-#[derive(Debug, Default)]
-struct TransferStats {
-    sent: u64,
-    received: u64,
 }
 
 #[cfg(test)]
@@ -364,7 +310,6 @@ mod tests {
         let event_handler = Arc::new(LogEventHandler::new(true));
         let tunnel = ChainTunnel::new(config, event_handler);
 
-        // 测试创建成功
         assert_eq!(tunnel.config.hops.len(), 2);
         assert_eq!(tunnel.config.remote_target, Some("target:80".to_string()));
     }
@@ -377,7 +322,6 @@ mod tests {
             local,
         );
 
-        // 链式隧道需要跳板和目标
         assert!(config.validate().is_err());
 
         let config = config.clone().with_hops(vec!["hop1:2222".to_string()]);

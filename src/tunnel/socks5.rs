@@ -5,6 +5,7 @@
 use crate::core::error::{FlyWheelError, Result};
 use crate::tunnel::config::TunnelConfig;
 use crate::tunnel::models::{ConnectionInfo, TunnelEvent, TunnelEventHandler, TunnelStatus};
+use crate::tunnel::relay;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -170,7 +171,7 @@ impl Socks5Server {
                 match timeout(timeout_dur, TcpStream::connect(&target_addr)).await {
                     Ok(Ok(target_stream)) => {
                         // 双向转发
-                        let stats = Self::relay(client, target_stream).await;
+                        let stats = relay::relay(client, target_stream).await;
 
                         {
                             let mut st = status.write().await;
@@ -266,8 +267,14 @@ impl Socks5Server {
 
         // 如果需要用户名密码认证
         if auth_method == AUTH_USERPASS {
-            let username = config.socks5_username.as_ref().unwrap();
-            let password = config.socks5_password.as_ref().unwrap();
+            let username = config.socks5_username.as_deref()
+                .ok_or_else(|| FlyWheelError::Other {
+                    message: "SOCKS5 认证配置错误：缺少用户名".to_string(),
+                })?;
+            let password = config.socks5_password.as_deref()
+                .ok_or_else(|| FlyWheelError::Other {
+                    message: "SOCKS5 认证配置错误：缺少密码".to_string(),
+                })?;
 
             let mut buf = [0u8; 256];
             stream.read_exact(&mut buf[0..2]).await
@@ -337,7 +344,6 @@ impl Socks5Server {
         let addr_type = buf[3];
 
         if cmd != CMD_CONNECT {
-            // 只支持 CONNECT 命令
             stream.write_all(&[0x05, REP_COMMAND_NOT_SUPPORTED, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]).await
                 .map_err(|_| FlyWheelError::Other {
                     message: "发送错误响应失败".to_string(),
@@ -350,7 +356,6 @@ impl Socks5Server {
         // 解析目标地址
         let target_addr = match addr_type {
             ADDR_IPV4 => {
-                // IPv4 地址
                 stream.read_exact(&mut buf[0..6]).await
                     .map_err(|_| FlyWheelError::Other {
                         message: "读取 IPv4 地址失败".to_string(),
@@ -361,7 +366,6 @@ impl Socks5Server {
                 format!("{}:{}", ip, port)
             }
             ADDR_DOMAIN => {
-                // 域名地址
                 let domain_len = buf[1] as usize;
                 stream.read_exact(&mut buf[0..domain_len + 2]).await
                     .map_err(|_| FlyWheelError::Other {
@@ -377,7 +381,6 @@ impl Socks5Server {
                 format!("{}:{}", domain, port)
             }
             ADDR_IPV6 => {
-                // IPv6 地址
                 stream.write_all(&[0x05, REP_ADDRESS_TYPE_NOT_SUPPORTED, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).await
                     .map_err(|_| FlyWheelError::Other {
                         message: "发送错误响应失败".to_string(),
@@ -406,55 +409,6 @@ impl Socks5Server {
         Ok(target_addr)
     }
 
-    /// 双向流量转发
-    async fn relay(mut client: TcpStream, mut target: TcpStream) -> TransferStats {
-        let mut client_buf = vec![0u8; 8192];
-        let mut target_buf = vec![0u8; 8192];
-        let mut sent = 0u64;
-        let mut received = 0u64;
-
-        loop {
-            tokio::select! {
-                // 客户端 -> 目标
-                result = client.read(&mut client_buf) => {
-                    match result {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            if let Err(e) = target.write_all(&client_buf[..n]).await {
-                                eprintln!("[错误] 写入目标失败: {}", e);
-                                break;
-                            }
-                            sent += n as u64;
-                        }
-                        Err(e) => {
-                            eprintln!("[错误] 读取客户端失败: {}", e);
-                            break;
-                        }
-                    }
-                }
-                // 目标 -> 客户端
-                result = target.read(&mut target_buf) => {
-                    match result {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            if let Err(e) = client.write_all(&target_buf[..n]).await {
-                                eprintln!("[错误] 写入客户端失败: {}", e);
-                                break;
-                            }
-                            received += n as u64;
-                        }
-                        Err(e) => {
-                            eprintln!("[错误] 读取目标失败: {}", e);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        TransferStats { sent, received }
-    }
-
     /// 获取代理状态
     #[allow(dead_code)]
     pub async fn get_status(&self) -> TunnelStatus {
@@ -468,11 +422,4 @@ impl Socks5Server {
         status.stop();
         self.event_handler.on_event(TunnelEvent::Stopped);
     }
-}
-
-/// 数据传输统计
-#[derive(Debug, Clone, Copy)]
-struct TransferStats {
-    sent: u64,
-    received: u64,
 }

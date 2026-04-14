@@ -5,8 +5,8 @@
 use crate::core::error::{FlyWheelError, Result};
 use crate::tunnel::config::TunnelConfig;
 use crate::tunnel::models::{ConnectionInfo, TunnelEvent, TunnelEventHandler, TunnelStatus};
+use crate::tunnel::relay;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 use tokio::time::{timeout, Duration};
@@ -37,7 +37,10 @@ impl ForwardTunnel {
         self.config.validate()
             .map_err(|e| FlyWheelError::Other { message: e })?;
 
-        let target = self.config.remote_target.clone().unwrap();
+        let target = self.config.remote_target.clone()
+            .ok_or_else(|| FlyWheelError::Other {
+                message: "正向隧道需要指定远程目标".to_string(),
+            })?;
 
         let listener = TcpListener::bind(&self.config.local_addr).await
             .map_err(|e| FlyWheelError::Other {
@@ -110,7 +113,7 @@ impl ForwardTunnel {
                         match result {
                             Ok(Ok(target_stream)) => {
                                 // 双向转发
-                                let stats = Self::relay(client, target_stream).await;
+                                let stats = relay::relay(client, target_stream).await;
 
                                 // 更新统计
                                 {
@@ -157,56 +160,6 @@ impl ForwardTunnel {
         }
     }
 
-    /// 双向流量转发
-    async fn relay(mut client: TcpStream, mut target: TcpStream) -> TransferStats {
-        let mut client_buf = vec![0u8; 8192];
-        let mut target_buf = vec![0u8; 8192];
-        let mut sent = 0u64;
-        let mut received = 0u64;
-
-        loop {
-            // 使用 select! 同时处理两个方向的数据
-            tokio::select! {
-                // 客户端 -> 目标
-                result = client.read(&mut client_buf) => {
-                    match result {
-                        Ok(0) => break, // 客户端关闭连接
-                        Ok(n) => {
-                            if let Err(e) = target.write_all(&client_buf[..n]).await {
-                                eprintln!("[错误] 写入目标失败: {}", e);
-                                break;
-                            }
-                            sent += n as u64;
-                        }
-                        Err(e) => {
-                            eprintln!("[错误] 读取客户端失败: {}", e);
-                            break;
-                        }
-                    }
-                }
-                // 目标 -> 客户端
-                result = target.read(&mut target_buf) => {
-                    match result {
-                        Ok(0) => break, // 目标关闭连接
-                        Ok(n) => {
-                            if let Err(e) = client.write_all(&target_buf[..n]).await {
-                                eprintln!("[错误] 写入客户端失败: {}", e);
-                                break;
-                            }
-                            received += n as u64;
-                        }
-                        Err(e) => {
-                            eprintln!("[错误] 读取目标失败: {}", e);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        TransferStats { sent, received }
-    }
-
     /// 获取隧道状态
     #[allow(dead_code)]
     pub async fn get_status(&self) -> TunnelStatus {
@@ -220,11 +173,4 @@ impl ForwardTunnel {
         status.stop();
         self.event_handler.on_event(TunnelEvent::Stopped);
     }
-}
-
-/// 数据传输统计
-#[derive(Debug, Clone, Copy)]
-struct TransferStats {
-    sent: u64,
-    received: u64,
 }

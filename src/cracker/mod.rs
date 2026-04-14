@@ -2,6 +2,7 @@
 //!
 //! 支持多种服务的弱密码爆破
 
+pub mod base;
 pub mod service;
 pub mod dict;
 pub mod ssh;

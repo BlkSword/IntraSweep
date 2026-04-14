@@ -37,7 +37,10 @@ impl ReverseTunnel {
         self.config.validate()
             .map_err(|e| FlyWheelError::Other { message: e })?;
 
-        let control_addr = self.config.remote_target.clone().unwrap();
+        let control_addr = self.config.remote_target.clone()
+            .ok_or_else(|| FlyWheelError::Other {
+                message: "反向隧道需要指定控制端地址".to_string(),
+            })?;
 
         {
             let mut status = self.status.write().await;
