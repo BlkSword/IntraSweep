@@ -11,6 +11,9 @@ pub mod models;
 pub mod port;
 pub mod service;
 
+#[cfg(windows)]
+pub mod arp;
+
 pub use config::{ScanConfig, ScanPreset, HostScanMethod, PortScanMethod};
 pub use host::HostScanner;
 pub use models::{ScanResult, ScanStats, ScanType};

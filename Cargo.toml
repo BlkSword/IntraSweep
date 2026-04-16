@@ -56,6 +56,15 @@ tiberius = "0.12"
 mysql_async = "0.34"
 async-trait = "0.1"
 
+# NTLM 认证 / 加密原语
+md-4 = "0.10"
+md-5 = "0.10"
+hmac = "0.12"
+digest = "0.10"
+base64 = "0.22"
+native-tls = "0.2"
+sha2 = "0.10"
+
 # 平台特定依赖
 [target.'cfg(windows)'.dependencies]
 # Windows 注册表操作

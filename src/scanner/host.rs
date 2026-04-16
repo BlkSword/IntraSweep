@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 use crate::core::Result;
-use crate::scanner::config::ScanConfig;
+use crate::scanner::config::{HostScanMethod, ScanConfig};
 use crate::scanner::models::HostResult;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -30,15 +30,75 @@ impl HostScanner {
         Self::new(ScanConfig::default())
     }
 
-    /// 快速主机发现（ICMP + TCP SYN）
+    /// 快速主机发现（根据配置选择扫描方式）
     pub async fn discover_hosts(&self, targets: Vec<IpAddr>) -> Vec<HostResult> {
-        let mut results = Vec::new();
+        match self.config.host_scan_method {
+            HostScanMethod::Arp => {
+                #[cfg(windows)]
+                {
+                    let arp_scanner = crate::scanner::arp::ArpScanner::new(self.config.clone());
+                    let arp_results = arp_scanner.scan(targets).await;
+                    if !arp_results.is_empty() {
+                        return arp_results;
+                    }
+                    // ARP 扫描无结果时回退到 TCP SYN
+                }
+                self.tcp_syn_scan(targets).await
+            }
+            HostScanMethod::Hybrid => {
+                let tcp_results = self.tcp_syn_scan(targets.clone()).await;
+                #[cfg(windows)]
+                {
+                    let arp_scanner = crate::scanner::arp::ArpScanner::new(self.config.clone());
+                    let arp_results = arp_scanner.scan(targets).await;
+                    Self::merge_scan_results(tcp_results, arp_results)
+                }
+                #[cfg(not(windows))]
+                {
+                    tcp_results
+                }
+            }
+            HostScanMethod::TcpSyn | HostScanMethod::Icmp => {
+                // TCP SYN 和 ICMP（暂用 TCP SYN 代替）都走此分支
+                self.tcp_syn_scan(targets).await
+            }
+        }
+    }
 
-        // 使用TCP SYN扫描（更可靠，因为不需要原始socket权限）
-        let tcp_results = self.tcp_syn_scan(targets).await;
-        results.extend(tcp_results);
+    /// 合并 TCP 和 ARP 扫描结果
+    ///
+    /// ARP 结果提供 MAC 地址，TCP 结果提供端口和延迟信息
+    fn merge_scan_results(mut tcp_results: Vec<HostResult>, arp_results: Vec<HostResult>) -> Vec<HostResult> {
+        // 建立 ARP MAC 地址映射
+        let mut mac_map = std::collections::HashMap::new();
+        for arp_result in &arp_results {
+            if let Some(ref mac) = arp_result.mac {
+                mac_map.insert(arp_result.ip.clone(), mac.clone());
+            }
+            // ARP 发现的主机但 TCP 未发现的，也加入结果
+            if !tcp_results.iter().any(|t| t.ip == arp_result.ip) {
+                tcp_results.push(HostResult {
+                    ip: arp_result.ip.clone(),
+                    hostname: None,
+                    is_alive: true,
+                    latency_ms: None,
+                    mac: arp_result.mac.clone(),
+                    open_ports: vec![],
+                    services: vec![],
+                });
+            }
+        }
 
-        results
+        // 为 TCP 结果补充 MAC 地址
+        for result in &mut tcp_results {
+            if result.mac.is_none() {
+                if let Some(mac) = mac_map.get(&result.ip) {
+                    result.mac = Some(mac.clone());
+                }
+            }
+        }
+
+        tcp_results
     }
 
     /// TCP SYN扫描（最通用方式，适用于所有平台）
