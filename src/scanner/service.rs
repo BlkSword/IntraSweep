@@ -110,36 +110,50 @@ impl ServiceIdentifier {
     fn get_probe_data(port: u16) -> &'static str {
         match port {
             // HTTP/HTTPS
-            80 | 8080 | 8000 => "GET / HTTP/1.0\r\n\r\n",
-            443 | 8443 => "GET / HTTP/1.0\r\n\r\n", // HTTPS需要TLS，这里尝试普通连接
-            // FTP
+            80 | 8080 | 8000 | 8888 => "GET / HTTP/1.0\r\nHost: \r\n\r\n",
+            443 | 8443 => "GET / HTTP/1.0\r\nHost: \r\n\r\n",
+            // FTP — 服务器主动发送 banner，无需探测数据
             21 => "",
-            // SSH
+            // SSH — 服务器主动发送 banner
             22 => "",
-            // SMTP
+            // SMTP — 服务器主动发送 banner
             25 | 587 => "",
-            // POP3
+            // POP3 — 服务器主动发送 banner
             110 => "",
-            // IMAP
+            // IMAP — 服务器主动发送 banner
             143 => "",
             // Telnet
             23 => "\r\n",
-            // VNC
+            // DNS
+            53 => "",
+            // LDAP — 发送搜索请求
+            389 => "",
+            // SMB — 服务器主动发送 negotiate response
+            445 => "",
+            // VNC — 服务器主动发送 RFB 版本
             5900 => "",
-            // MySQL
+            // MySQL — 服务器主动发送 handshake
             3306 => "",
-            // PostgreSQL
+            // PostgreSQL — 服务器主动发送 handshake
             5432 => "",
             // Redis
             6379 => "*1\r\n$4\r\nPING\r\n",
-            // MongoDB
+            // MongoDB — 发送 ismaster 命令
             27017 => "",
             // Elasticsearch
-            9200 => "GET / HTTP/1.0\r\n\r\n",
-            // RDP
+            9200 => "GET / HTTP/1.0\r\nHost: \r\n\r\n",
+            // RDP — 服务器主动发送 X.224
             3389 => "",
-            // SMB
-            445 => "",
+            // MSSQL — 服务器主动发送 prelogin response
+            1433 => "",
+            // WinRM
+            5985 | 5986 => "",
+            // Oracle
+            1521 => "",
+            // RPC
+            135 => "",
+            // NetBIOS
+            139 => "",
             _ => "",
         }
     }
@@ -193,142 +207,330 @@ impl ServiceIdentifier {
     fn parse_version_info(info: &mut ServiceInfo, banner: &str, port: u16) {
         let banner_lower = banner.to_lowercase();
 
-        // HTTP服务
-        if port == 80 || port == 8080 || port == 8000 {
-            if let Some(line) = banner.lines().next() {
-                if line.contains("Server:") {
-                    info.product = "HTTP Server".to_string();
-                } else if line.starts_with("HTTP/") {
-                    info.version = line.to_string();
-                }
-            }
-
-            // 尝试识别具体的服务器
-            if banner_lower.contains("nginx") {
-                info.product = "nginx".to_string();
-                if let Some(pos) = banner_lower.find("nginx/") {
-                    let remaining = &banner[pos + 6..];
-                    if let Some(end) = remaining.find(|c: char| !c.is_numeric() && c != '.') {
-                        info.version = remaining[..end].to_string();
-                    }
-                }
-            } else if banner_lower.contains("apache") {
-                info.product = "Apache".to_string();
-                if let Some(pos) = banner_lower.find("apache/") {
-                    let remaining = &banner[pos + 7..];
-                    if let Some(end) = remaining.find(|c: char| !c.is_numeric() && c != '.') {
-                        info.version = remaining[..end].to_string();
-                    }
-                }
-            } else if banner_lower.contains("iis") {
-                info.product = "IIS".to_string();
-            }
+        // 通用: 检查所有 HTTP 端口的 Server 头
+        let http_ports = [80, 443, 8080, 8000, 8443, 8888, 9200];
+        if http_ports.contains(&port) {
+            Self::parse_http_banner(info, banner, &banner_lower);
         }
 
         // SSH服务
         if port == 22 {
-            if banner.contains("SSH-") {
-                info.product = "SSH".to_string();
-                if let Some(pos) = banner.find("SSH-") {
-                    let remaining = &banner[pos + 4..];
-                    info.version = remaining.split_whitespace().next().unwrap_or("").to_string();
-                }
-            }
-
-            // OpenSSH
-            if banner_lower.contains("openssh") {
-                info.product = "OpenSSH".to_string();
-            }
+            Self::parse_ssh_banner(info, banner, &banner_lower);
         }
 
         // FTP服务
         if port == 21 {
-            if banner_lower.contains("vsftpd") {
-                info.product = "vsftpd".to_string();
-            } else if banner_lower.contains("proftpd") {
-                info.product = "ProFTPD".to_string();
-            } else if banner_lower.contains("pure-ftpd") {
-                info.product = "Pure-FTPd".to_string();
-            } else if banner_lower.contains("filezilla") {
-                info.product = "FileZilla Server".to_string();
-            } else if banner_lower.contains("microsoft") {
-                info.product = "Microsoft FTP".to_string();
-            }
+            Self::parse_ftp_banner(info, banner, &banner_lower);
         }
 
         // SMTP服务
         if port == 25 || port == 587 {
-            if banner_lower.contains("postfix") {
-                info.product = "Postfix".to_string();
-            } else if banner_lower.contains("sendmail") {
-                info.product = "Sendmail".to_string();
-            } else if banner_lower.contains("exim") {
-                info.product = "Exim".to_string();
-            } else if banner_lower.contains("exchange") {
-                info.product = "Microsoft Exchange".to_string();
+            Self::parse_smtp_banner(info, banner, &banner_lower);
+        }
+
+        // POP3
+        if port == 110 {
+            if banner_lower.contains("pop3") || banner.starts_with('+') {
+                info.product = "POP3".to_string();
+                if banner_lower.contains("dovecot") {
+                    info.product = "Dovecot POP3".to_string();
+                } else if banner_lower.contains("courier") {
+                    info.product = "Courier POP3".to_string();
+                } else if banner_lower.contains("exchange") {
+                    info.product = "Microsoft Exchange POP3".to_string();
+                }
+            }
+        }
+
+        // IMAP
+        if port == 143 {
+            if banner_lower.contains("imap") || banner.starts_with('*') {
+                info.product = "IMAP".to_string();
+                if banner_lower.contains("dovecot") {
+                    info.product = "Dovecot IMAP".to_string();
+                } else if banner_lower.contains("courier") {
+                    info.product = "Courier IMAP".to_string();
+                } else if banner_lower.contains("exchange") {
+                    info.product = "Microsoft Exchange IMAP".to_string();
+                }
+                // 提取版本号
+                if let Some(pos) = banner.find("IMAP4rev1 ") {
+                    let remaining = &banner[pos + 10..];
+                    info.version = remaining.split_whitespace().next().unwrap_or("").to_string();
+                }
             }
         }
 
         // 数据库服务
         if port == 3306 {
-            // MySQL
-            if banner_lower.contains("mysql") {
-                info.product = "MySQL".to_string();
-            }
-            // 解析MySQL版本：5.7.25-0ubuntu0.18.04.2
-            if let Some(pos) = banner_lower.find("5.") {
-                let remaining = &banner[pos..];
-                if let Some(end) = remaining.find(|c: char| c == '\n' || c == '\r') {
-                    info.version = remaining[..end].to_string();
-                }
-            }
+            Self::parse_mysql_banner(info, banner, &banner_lower);
         }
 
         if port == 5432 {
-            // PostgreSQL
             info.product = "PostgreSQL".to_string();
+            // PostgreSQL 不发送可读 banner，尝试从二进制中检测
         }
 
         if port == 1433 {
-            // MSSQL
             info.product = "Microsoft SQL Server".to_string();
         }
 
         if port == 6379 {
-            // Redis
             if banner.contains("PONG") {
                 info.product = "Redis".to_string();
+            } else if banner.contains("-NOAUTH") {
+                info.product = "Redis".to_string();
+                info.extra_info = "需要认证".to_string();
+            } else if banner.contains("-DENIED") {
+                info.product = "Redis".to_string();
+                info.extra_info = "访问被拒绝".to_string();
             }
         }
 
-        if port == 9200 {
-            // Elasticsearch
-            info.product = "Elasticsearch".to_string();
-            // 尝试从JSON响应中提取版本
-            if let Some(pos) = banner.find("\"number\" : \"") {
+        if port == 27017 {
+            info.product = "MongoDB".to_string();
+            // 尝试从响应中提取版本信息
+            if let Some(pos) = banner.find("\"version\" : \"") {
                 let remaining = &banner[pos + 12..];
+                if let Some(end) = remaining.find('"') {
+                    info.version = remaining[..end].to_string();
+                }
+            } else if let Some(pos) = banner.find("\"version\":\"") {
+                let remaining = &banner[pos + 11..];
                 if let Some(end) = remaining.find('"') {
                     info.version = remaining[..end].to_string();
                 }
             }
         }
 
-        if port == 27017 {
-            // MongoDB
-            info.product = "MongoDB".to_string();
-        }
-
         // VNC
         if port == 5900 {
             if banner_lower.contains("rfb") {
                 info.product = "VNC".to_string();
-                info.version = banner.split_whitespace().nth(1).unwrap_or("").to_string();
+                // RFB 协议版本: RFB 003.008
+                if let Some(pos) = banner.find("RFB ") {
+                    let remaining = &banner[pos + 4..];
+                    info.version = remaining.split_whitespace().next().unwrap_or("").to_string();
+                }
             }
         }
 
         // RDP
         if port == 3389 {
             info.product = "Microsoft RDP".to_string();
+            // RDP 通常不发送可读文本 banner
+        }
+
+        // LDAP
+        if port == 389 {
+            info.product = "LDAP".to_string();
+            if banner_lower.contains("microsoft") {
+                info.product = "Active Directory LDAP".to_string();
+            } else if banner_lower.contains("openldap") {
+                info.product = "OpenLDAP".to_string();
+            }
+        }
+
+        // LDAPS
+        if port == 636 {
+            info.product = "LDAPS".to_string();
+        }
+
+        // SMB
+        if port == 445 {
+            info.product = "SMB".to_string();
+            if banner_lower.contains("windows") {
+                info.product = "Windows SMB".to_string();
+            } else if banner_lower.contains("samba") {
+                info.product = "Samba".to_string();
+                if let Some(pos) = banner_lower.find("samba ") {
+                    let remaining = &banner[pos + 6..];
+                    info.version = remaining.split_whitespace().next().unwrap_or("").to_string();
+                }
+            }
+        }
+
+        // WinRM
+        if port == 5985 || port == 5986 {
+            info.product = "WinRM".to_string();
+            if banner.contains("WSMAN") || banner.contains("wsman") {
+                info.version = "2.0".to_string();
+            }
+        }
+
+        // Oracle
+        if port == 1521 {
+            info.product = "Oracle TNS".to_string();
+        }
+
+        // MSSQL
+        if port == 1433 {
+            info.product = "Microsoft SQL Server".to_string();
+            // TDS 协议预登录响应包含版本信息
+        }
+
+        // DNS
+        if port == 53 {
+            info.product = "DNS".to_string();
+            if banner_lower.contains("bind") {
+                info.product = "BIND DNS".to_string();
+            }
+        }
+
+        // 通用 Telnet 检测
+        if port == 23 {
+            if banner_lower.contains("login:") {
+                info.product = "Telnet".to_string();
+            }
+        }
+    }
+
+    /// 解析 HTTP Banner
+    fn parse_http_banner(info: &mut ServiceInfo, banner: &str, banner_lower: &str) {
+        // 提取状态行
+        if let Some(line) = banner.lines().next() {
+            if line.starts_with("HTTP/") {
+                info.version = line.to_string();
+            }
+        }
+
+        // 查找 Server 头
+        for line in banner.lines() {
+            if line.to_lowercase().starts_with("server:") {
+                let server_value = line.split(':').nth(1).unwrap_or("").trim();
+                info.product = server_value.to_string();
+
+                // 进一步识别具体服务器
+                if banner_lower.contains("nginx") {
+                    info.product = "nginx".to_string();
+                    Self::extract_version_after(info, banner_lower, "nginx/");
+                } else if banner_lower.contains("apache") || banner_lower.contains("httpd") {
+                    info.product = "Apache".to_string();
+                    Self::extract_version_after(info, banner_lower, "apache/");
+                } else if banner_lower.contains("iis") {
+                    info.product = "Microsoft IIS".to_string();
+                } else if banner_lower.contains("tomcat") {
+                    info.product = "Apache Tomcat".to_string();
+                } else if banner_lower.contains("jetty") {
+                    info.product = "Jetty".to_string();
+                } else if banner_lower.contains("express") {
+                    info.product = "Express".to_string();
+                } else if banner_lower.contains("gunicorn") {
+                    info.product = "Gunicorn".to_string();
+                } else if banner_lower.contains("openresty") {
+                    info.product = "OpenResty".to_string();
+                    Self::extract_version_after(info, banner_lower, "openresty/");
+                }
+                break;
+            }
+        }
+    }
+
+    /// 从字符串中提取 "prefix" 之后的版本号
+    fn extract_version_after(info: &mut ServiceInfo, text: &str, prefix: &str) {
+        if let Some(pos) = text.find(prefix) {
+            let remaining = &text[pos + prefix.len()..];
+            let end = remaining.find(|c: char| !c.is_numeric() && c != '.').unwrap_or(remaining.len());
+            if end > 0 {
+                info.version = remaining[..end].to_string();
+            }
+        }
+    }
+
+    /// 解析 SSH Banner
+    fn parse_ssh_banner(info: &mut ServiceInfo, banner: &str, banner_lower: &str) {
+        if banner.contains("SSH-") {
+            info.product = "SSH".to_string();
+            if let Some(pos) = banner.find("SSH-") {
+                let remaining = &banner[pos + 4..];
+                // SSH-2.0-OpenSSH_8.9p1 Ubuntu-3
+                if let Some(ver_end) = remaining.find('-') {
+                    info.version = remaining[..ver_end].to_string();
+                    let server_info = &remaining[ver_end + 1..];
+                    let server_name = server_info.split_whitespace().next().unwrap_or("");
+
+                    if server_name.to_lowercase().starts_with("openssh") {
+                        info.product = "OpenSSH".to_string();
+                        if let Some(vpos) = server_name.find('_') {
+                            info.version = format!("SSH-{} {}", info.version, &server_name[vpos + 1..]);
+                        }
+                    } else if server_name.to_lowercase().starts_with("dropbear") {
+                        info.product = "Dropbear SSH".to_string();
+                    } else if server_name.to_lowercase().starts_with("libssh") {
+                        info.product = "libssh".to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    /// 解析 FTP Banner
+    fn parse_ftp_banner(info: &mut ServiceInfo, banner: &str, banner_lower: &str) {
+        // FTP banner 格式: 220 <server info>
+        if banner.starts_with("220") {
+            let server_info = banner.trim_start_matches("220").trim();
+            info.extra_info = server_info.to_string();
+        }
+
+        if banner_lower.contains("vsftpd") {
+            info.product = "vsftpd".to_string();
+            Self::extract_version_after(info, banner_lower, "vsftpd ");
+        } else if banner_lower.contains("proftpd") {
+            info.product = "ProFTPD".to_string();
+            Self::extract_version_after(info, banner_lower, "proftpd ");
+        } else if banner_lower.contains("pure-ftpd") {
+            info.product = "Pure-FTPd".to_string();
+        } else if banner_lower.contains("filezilla") {
+            info.product = "FileZilla Server".to_string();
+        } else if banner_lower.contains("microsoft") {
+            info.product = "Microsoft FTP".to_string();
+        } else if banner_lower.contains("wu-ftpd") || banner_lower.contains("wu-ftp") {
+            info.product = "WU-FTPD".to_string();
+        }
+    }
+
+    /// 解析 SMTP Banner
+    fn parse_smtp_banner(info: &mut ServiceInfo, banner: &str, banner_lower: &str) {
+        // SMTP banner 格式: 220 <server info>
+        if banner.starts_with("220") {
+            let server_info = banner.trim_start_matches("220").trim();
+            info.extra_info = server_info.to_string();
+        }
+
+        if banner_lower.contains("postfix") {
+            info.product = "Postfix".to_string();
+        } else if banner_lower.contains("sendmail") {
+            info.product = "Sendmail".to_string();
+        } else if banner_lower.contains("exim") {
+            info.product = "Exim".to_string();
+            Self::extract_version_after(info, banner_lower, "exim ");
+        } else if banner_lower.contains("exchange") {
+            info.product = "Microsoft Exchange".to_string();
+        } else if banner_lower.contains("hmailserver") {
+            info.product = "hMailServer".to_string();
+        }
+    }
+
+    /// 解析 MySQL Banner
+    fn parse_mysql_banner(info: &mut ServiceInfo, _banner: &str, banner_lower: &str) {
+        info.product = "MySQL".to_string();
+        // MySQL 服务器握手包是二进制的，但有些版本信息可能在文本中
+        for ver_prefix in &["5.0", "5.1", "5.5", "5.6", "5.7", "8.0", "8.1", "8.2", "8.3", "8.4"] {
+            if let Some(pos) = banner_lower.find(*ver_prefix) {
+                let remaining = &banner_lower[pos..];
+                if let Some(end) = remaining.find(|c: char| c == '\n' || c == '\r' || c == '\0') {
+                    info.version = remaining[..end].to_string();
+                } else {
+                    info.version = remaining.to_string();
+                }
+                break;
+            }
+        }
+
+        if banner_lower.contains("mariadb") {
+            info.product = "MariaDB".to_string();
+        } else if banner_lower.contains("percona") {
+            info.product = "Percona Server".to_string();
         }
     }
 

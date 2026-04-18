@@ -51,6 +51,12 @@ impl ProcessCollector {
         let process = self.system.process(sysinfo::Pid::from_u32(pid))?;
         let disk_usage = process.disk_usage();
 
+        // 获取进程用户
+        let user = self.get_process_user(pid);
+
+        // 获取线程数
+        let threads = self.get_process_threads(pid);
+
         Some(ProcessDetails {
             pid,
             name: process.name().to_string(),
@@ -72,9 +78,110 @@ impl ProcessCollector {
             disk_usage: disk_usage.total_written_bytes + disk_usage.total_read_bytes,
             run_time: process.run_time(),
             parent: process.parent().map(|p| p.as_u32()),
-            user: None, // 需要平台特定实现
-            threads: None, // 需要平台特定实现
+            user,
+            threads,
         })
+    }
+
+    /// 获取进程所属用户
+    fn get_process_user(&self, pid: u32) -> Option<String> {
+        #[cfg(windows)]
+        {
+            // Windows: 使用 tasklist /FI /V 获取进程所有者
+            use std::process::Command;
+            if let Ok(output) = Command::new("tasklist")
+                .args(&["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/V"])
+                .output()
+            {
+                let content = String::from_utf8_lossy(&output.stdout);
+                for line in content.lines().skip(1) {
+                    let fields: Vec<&str> = line.split("\",\"").collect();
+                    if fields.len() >= 7 {
+                        // CSV 格式: "映像名称","PID","会话名","会话#","内存使用","状态","用户名"
+                        let user = fields[6].trim_matches('"').to_string();
+                        if !user.is_empty() && user != "N/A" {
+                            return Some(user);
+                        }
+                    }
+                }
+            }
+            None
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            // Linux: 从 /proc/[pid]/status 读取
+            let status_path = format!("/proc/{}/status", pid);
+            if let Ok(content) = std::fs::read_to_string(&status_path) {
+                for line in content.lines() {
+                    if line.starts_with("Uid:") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 2 {
+                            if let Ok(uid) = parts[1].parse::<u32>() {
+                                // 尝试解析用户名
+                                return Some(get_username_by_uid(uid));
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        }
+
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            let _ = pid;
+            None
+        }
+    }
+
+    /// 获取进程线程数
+    fn get_process_threads(&self, pid: u32) -> Option<usize> {
+        #[cfg(windows)]
+        {
+            // Windows: 使用 wmic 获取线程数
+            use std::process::Command;
+            if let Ok(output) = Command::new("wmic")
+                .args(&["process", "where", &format!("ProcessId={}", pid), "get", "ThreadCount", "/value"])
+                .output()
+            {
+                let content = String::from_utf8_lossy(&output.stdout);
+                for line in content.lines() {
+                    if line.starts_with("ThreadCount=") {
+                        if let Some(count_str) = line.split('=').nth(1) {
+                            if let Ok(count) = count_str.trim().parse::<usize>() {
+                                return Some(count);
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            // Linux: 从 /proc/[pid]/status 读取 Threads 行
+            let status_path = format!("/proc/{}/status", pid);
+            if let Ok(content) = std::fs::read_to_string(&status_path) {
+                for line in content.lines() {
+                    if line.starts_with("Threads:") {
+                        if let Some(count_str) = line.split(':').nth(1) {
+                            if let Ok(count) = count_str.trim().parse::<usize>() {
+                                return Some(count);
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        }
+
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            let _ = pid;
+            None
+        }
     }
 
     /// 查找可疑进程
@@ -149,6 +256,24 @@ pub struct ProcessDetails {
     pub parent: Option<u32>,
     pub user: Option<String>,
     pub threads: Option<usize>,
+}
+
+/// Linux: 通过 UID 获取用户名
+#[cfg(target_os = "linux")]
+fn get_username_by_uid(uid: u32) -> String {
+    if let Ok(content) = std::fs::read_to_string("/etc/passwd") {
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split(':').collect();
+            if parts.len() >= 3 {
+                if let Ok(puid) = parts[2].parse::<u32>() {
+                    if puid == uid {
+                        return parts[0].to_string();
+                    }
+                }
+            }
+        }
+    }
+    format!("uid_{}", uid)
 }
 
 #[cfg(test)]

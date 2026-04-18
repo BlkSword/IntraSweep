@@ -86,20 +86,29 @@ impl NetworkCollector {
 
     #[cfg(windows)]
     fn collect_windows_interfaces(&self) -> Vec<NetworkInterface> {
+        use std::process::Command;
         let mut interfaces = Vec::new();
 
-        // 尝试获取本地IP地址
-        if let Ok(ip) = local_ip_address::local_ip() {
-            interfaces.push(NetworkInterface {
-                name: "default".to_string(),
-                ip: ip.to_string(),
-                netmask: "255.255.255.0".to_string(),
-                mac: None,
-                ipv6: None,
-                is_up: true,
-                gateway: None,
-                dns_servers: Vec::new(),
-            });
+        // 使用 ipconfig /all 获取详细网络信息
+        if let Ok(output) = Command::new("ipconfig").arg("/all").output() {
+            let content = String::from_utf8_lossy(&output.stdout);
+            interfaces = parse_windows_ipconfig(&content);
+        }
+
+        // 如果 ipconfig 失败，回退到本地 IP 检测
+        if interfaces.is_empty() {
+            if let Ok(ip) = local_ip_address::local_ip() {
+                interfaces.push(NetworkInterface {
+                    name: "default".to_string(),
+                    ip: ip.to_string(),
+                    netmask: "255.255.255.0".to_string(),
+                    mac: None,
+                    ipv6: None,
+                    is_up: true,
+                    gateway: None,
+                    dns_servers: Vec::new(),
+                });
+            }
         }
 
         interfaces
@@ -107,15 +116,26 @@ impl NetworkCollector {
 
     #[cfg(windows)]
     fn collect_windows_routes(&self) -> Vec<RouteEntry> {
-        vec![
-            RouteEntry {
+        use std::process::Command;
+        let mut routes = Vec::new();
+
+        // 使用 route print 获取路由表
+        if let Ok(output) = Command::new("route").arg("print").output() {
+            let content = String::from_utf8_lossy(&output.stdout);
+            routes = parse_windows_routes(&content);
+        }
+
+        if routes.is_empty() {
+            routes.push(RouteEntry {
                 destination: "0.0.0.0/0".to_string(),
                 gateway: "unknown".to_string(),
                 netmask: "0.0.0.0".to_string(),
                 metric: 0,
                 interface: "default".to_string(),
-            }
-        ]
+            });
+        }
+
+        routes
     }
 
     #[cfg(windows)]
@@ -670,6 +690,175 @@ fn tcp_state_to_string(state: u64) -> String {
         11 => "CLOSING".to_string(),
         _ => "UNKNOWN".to_string(),
     }
+}
+
+// ==================== Windows 解析函数 ====================
+
+/// 解析 Windows ipconfig /all 输出
+#[cfg(windows)]
+fn parse_windows_ipconfig(content: &str) -> Vec<NetworkInterface> {
+    let mut interfaces = Vec::new();
+    let mut current_name = String::new();
+    let mut current_ip = String::new();
+    let mut current_netmask = String::new();
+    let mut current_mac = String::new();
+    let mut current_gateway = String::new();
+    let mut current_dns: Vec<String> = Vec::new();
+    let mut current_ipv6 = String::new();
+    let mut has_ipv4 = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // 新的适配器段落以缩进的标题开始
+        // 例如: "以太网适配器 Ethernet0:" 或 "Wireless LAN adapter Wi-Fi:"
+        if !line.starts_with(' ') && !line.starts_with('\t') && trimmed.ends_with(':') && !trimmed.is_empty() {
+            // 保存上一个接口
+            if !current_ip.is_empty() || !current_ipv6.is_empty() {
+                interfaces.push(NetworkInterface {
+                    name: current_name.clone(),
+                    ip: if current_ip.is_empty() { current_ipv6.clone() } else { current_ip.clone() },
+                    netmask: if current_netmask.is_empty() { "255.255.255.0".to_string() } else { current_netmask.clone() },
+                    mac: if current_mac.is_empty() { None } else { Some(current_mac.clone()) },
+                    ipv6: if current_ipv6.is_empty() { None } else { Some(current_ipv6.clone()) },
+                    is_up: true,
+                    gateway: if current_gateway.is_empty() { None } else { Some(current_gateway.clone()) },
+                    dns_servers: current_dns.clone(),
+                });
+            }
+
+            // 提取适配器名称
+            current_name = trimmed
+                .trim_start_matches("以太网适配器 ")
+                .trim_start_matches("Wireless LAN adapter ")
+                .trim_start_matches("Ethernet adapter ")
+                .trim_start_matches("隧道适配器 ")
+                .trim_start_matches("Tunnel adapter ")
+                .trim_end_matches(':')
+                .trim()
+                .to_string();
+            current_ip.clear();
+            current_netmask.clear();
+            current_mac.clear();
+            current_gateway.clear();
+            current_dns.clear();
+            current_ipv6.clear();
+            has_ipv4 = false;
+            continue;
+        }
+
+        // 解析属性行
+        if let Some(value) = extract_ipconfig_value(trimmed, "IPv4 地址") {
+            current_ip = value.split('(').next().unwrap_or(&value).trim().to_string();
+            has_ipv4 = true;
+        } else if let Some(value) = extract_ipconfig_value(trimmed, "IPv4 Address") {
+            current_ip = value.split('(').next().unwrap_or(&value).trim().to_string();
+            has_ipv4 = true;
+        } else if let Some(value) = extract_ipconfig_value(trimmed, "子网掩码") {
+            current_netmask = value.trim().to_string();
+        } else if let Some(value) = extract_ipconfig_value(trimmed, "Subnet Mask") {
+            current_netmask = value.trim().to_string();
+        } else if let Some(value) = extract_ipconfig_value(trimmed, "物理地址") {
+            current_mac = value.trim().to_string();
+        } else if let Some(value) = extract_ipconfig_value(trimmed, "Physical Address") {
+            current_mac = value.trim().to_string();
+        } else if let Some(value) = extract_ipconfig_value(trimmed, "默认网关") {
+            current_gateway = value.trim().to_string();
+        } else if let Some(value) = extract_ipconfig_value(trimmed, "Default Gateway") {
+            current_gateway = value.trim().to_string();
+        } else if let Some(value) = extract_ipconfig_value(trimmed, "DNS 服务器") {
+            current_dns.push(value.trim().to_string());
+        } else if let Some(value) = extract_ipconfig_value(trimmed, "DNS Servers") {
+            current_dns.push(value.trim().to_string());
+        } else if !has_ipv4 {
+            if let Some(value) = extract_ipconfig_value(trimmed, "IPv6 地址") {
+                current_ipv6 = value.split('%').next().unwrap_or(&value).trim().to_string();
+            } else if let Some(value) = extract_ipconfig_value(trimmed, "IPv6 Address") {
+                current_ipv6 = value.split('%').next().unwrap_or(&value).trim().to_string();
+            }
+        }
+    }
+
+    // 保存最后一个接口
+    if !current_ip.is_empty() || !current_ipv6.is_empty() {
+        interfaces.push(NetworkInterface {
+            name: current_name,
+            ip: if current_ip.is_empty() { current_ipv6.clone() } else { current_ip },
+            netmask: if current_netmask.is_empty() { "255.255.255.0".to_string() } else { current_netmask },
+            mac: if current_mac.is_empty() { None } else { Some(current_mac) },
+            ipv6: if current_ipv6.is_empty() { None } else { Some(current_ipv6) },
+            is_up: true,
+            gateway: if current_gateway.is_empty() { None } else { Some(current_gateway) },
+            dns_servers: current_dns,
+        });
+    }
+
+    interfaces
+}
+
+/// 从 ipconfig 输出行中提取键值
+#[cfg(windows)]
+fn extract_ipconfig_value(line: &str, key: &str) -> Option<String> {
+    if line.starts_with(key) {
+        // 格式: "   IPv4 地址 . . . . . . . . . . . . . : 192.168.1.1"
+        if let Some(pos) = line.find(':') {
+            let value = line[pos + 1..].trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 解析 Windows route print 输出
+#[cfg(windows)]
+fn parse_windows_routes(content: &str) -> Vec<RouteEntry> {
+    let mut routes = Vec::new();
+    let mut in_active_routes = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // 跳过空行
+        if trimmed.is_empty() {
+            if in_active_routes {
+                in_active_routes = false;
+            }
+            continue;
+        }
+
+        // 找到 "活动路由:" 或 "Active Routes:" 段
+        if trimmed.starts_with("活动路由") || trimmed.starts_with("Active Routes") {
+            in_active_routes = true;
+            continue;
+        }
+
+        if trimmed.starts_with("网络目标") || trimmed.starts_with("Network Destination") {
+            continue;
+        }
+
+        // 结束标记
+        if trimmed.starts_with("永久路由") || trimmed.starts_with("Persistent Routes") {
+            in_active_routes = false;
+            continue;
+        }
+
+        if in_active_routes {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() >= 4 {
+                routes.push(RouteEntry {
+                    destination: parts[0].to_string(),
+                    gateway: parts[1].to_string(),
+                    netmask: parts[2].to_string(),
+                    metric: parts[3].parse().unwrap_or(0),
+                    interface: if parts.len() >= 5 { parts[4].to_string() } else { "default".to_string() },
+                });
+            }
+        }
+    }
+
+    routes
 }
 
 // ==================== 数据结构 ====================

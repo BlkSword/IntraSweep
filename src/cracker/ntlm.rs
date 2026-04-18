@@ -4,7 +4,6 @@
 //! RDP (CredSSP/NLA) 和 WinRM (NTLM over HTTP) 共享此模块。
 
 use hmac::{Hmac, Mac};
-use md4::Md4;
 use md5::Md5;
 use digest::Digest;
 
@@ -48,12 +47,7 @@ pub fn nt_hash(password: &str) -> [u8; 16] {
         .flat_map(|c| c.to_le_bytes())
         .collect();
 
-    let mut hasher = Md4::new();
-    hasher.update(&utf16le);
-    let result = hasher.finalize();
-    let mut hash = [0u8; 16];
-    hash.copy_from_slice(&result);
-    hash
+    md4_hash(&utf16le)
 }
 
 /// 计算 NTLMv2 Hash: HMAC-MD5(NT_Hash, Unicode(uppercase(username) + domain))
@@ -491,6 +485,96 @@ fn der_read_length(data: &[u8]) -> Result<(LengthInfo, LengthInfo), String> {
 struct LengthInfo {
     consumed: usize,
     value: usize,
+}
+
+// ==================== MD4 哈希自实现 ====================
+
+/// MD4 哈希函数（RFC 1320）
+///
+/// 用于 NTLM 的 NT Hash 计算。 crates.io 上没有官方 MD4 crate，因此自行实现。
+fn md4_hash(input: &[u8]) -> [u8; 16] {
+    // 填充
+    let mut data = input.to_vec();
+    let bit_len = (input.len() as u64) * 8;
+
+    // 追加 0x80
+    data.push(0x80);
+
+    // 填充到 56 mod 64 字节
+    while data.len() % 64 != 56 {
+        data.push(0);
+    }
+
+    // 追加原始长度 (little-endian, 64-bit)
+    data.extend_from_slice(&bit_len.to_le_bytes());
+
+    // 初始状态
+    let mut a: u32 = 0x67452301;
+    let mut b: u32 = 0xEFCDAB89;
+    let mut c: u32 = 0x98BADCFE;
+    let mut d: u32 = 0x10325476;
+
+    // 处理每个 64 字节块
+    for chunk in data.chunks_exact(64) {
+        let m: [u32; 16] = std::array::from_fn(|i| {
+            u32::from_le_bytes([chunk[i * 4], chunk[i * 4 + 1], chunk[i * 4 + 2], chunk[i * 4 + 3]])
+        });
+
+        let (aa, bb, cc, dd) = (a, b, c, d);
+
+        // Round 1
+        for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] {
+            a = a.wrapping_add(f(b, c, d)).wrapping_add(m[i]);
+            a = rotate_left(a, if i % 4 == 0 { 3 } else if i % 4 == 1 { 7 } else if i % 4 == 2 { 11 } else { 19 });
+            let tmp = d; d = c; c = b; b = a; a = tmp;
+        }
+
+        // Round 2
+        for i in [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15] {
+            a = a.wrapping_add(g(b, c, d)).wrapping_add(m[i]).wrapping_add(0x5A827999);
+            a = rotate_left(a, if [0, 4, 8, 12].contains(&i) { 3 } else if [1, 5, 9, 13].contains(&i) { 5 } else if [2, 6, 10, 14].contains(&i) { 9 } else { 13 });
+            let tmp = d; d = c; c = b; b = a; a = tmp;
+        }
+
+        // Round 3
+        for i in [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15] {
+            a = a.wrapping_add(h(b, c, d)).wrapping_add(m[i]).wrapping_add(0x6ED9EBA1);
+            a = rotate_left(a, if i == 0 || i == 4 || i == 8 || i == 12 { 3 } else if i == 2 || i == 6 || i == 10 || i == 14 { 9 } else { 11 });
+            let tmp = d; d = c; c = b; b = a; a = tmp;
+        }
+
+        a = a.wrapping_add(aa);
+        b = b.wrapping_add(bb);
+        c = c.wrapping_add(cc);
+        d = d.wrapping_add(dd);
+    }
+
+    let mut result = [0u8; 16];
+    result[0..4].copy_from_slice(&a.to_le_bytes());
+    result[4..8].copy_from_slice(&b.to_le_bytes());
+    result[8..12].copy_from_slice(&c.to_le_bytes());
+    result[12..16].copy_from_slice(&d.to_le_bytes());
+    result
+}
+
+#[inline]
+fn f(x: u32, y: u32, z: u32) -> u32 {
+    (x & y) | (!x & z)
+}
+
+#[inline]
+fn g(x: u32, y: u32, z: u32) -> u32 {
+    (x & y) | (x & z) | (y & z)
+}
+
+#[inline]
+fn h(x: u32, y: u32, z: u32) -> u32 {
+    x ^ y ^ z
+}
+
+#[inline]
+fn rotate_left(x: u32, n: u32) -> u32 {
+    (x << n) | (x >> (32 - n))
 }
 
 #[cfg(test)]

@@ -49,7 +49,6 @@ impl SystemCollector {
             "Linux".to_string()
         };
 
-        // 获取真实的系统版本
         let os_version = self.get_real_os_version();
 
         OsInfo {
@@ -61,7 +60,6 @@ impl SystemCollector {
 
     /// 获取真实的系统版本
     fn get_real_os_version(&self) -> String {
-        // 使用单一的条件编译块
         #[cfg(windows)]
         {
             self.get_windows_version_internal()
@@ -83,12 +81,35 @@ impl SystemCollector {
         }
     }
 
-    /// Windows 版本获取
+    /// Windows 版本获取（从注册表读取）
     #[cfg(windows)]
     fn get_windows_version_internal(&self) -> String {
-        env::var("OS")
-            .or_else(|_| env::var("WINDOWS_TRACING_FLAGS"))
-            .unwrap_or_else(|_| "Windows".to_string())
+        use winreg::enums::*;
+        use winreg::RegKey;
+
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        if let Ok(key) = hklm.open_subkey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion") {
+            let product_name: String = key.get_value("ProductName").unwrap_or_default();
+            let display_version: String = key.get_value("DisplayVersion").unwrap_or_default();
+            let current_build: String = key.get_value("CurrentBuild").unwrap_or_default();
+            let current_version: String = key.get_value("CurrentVersion").unwrap_or_default();
+
+            let mut version = product_name;
+            if !display_version.is_empty() {
+                version = format!("{} {}", version, display_version);
+            }
+            if !current_build.is_empty() {
+                version = format!("{} (Build {})", version, current_build);
+            }
+            if !version.is_empty() {
+                return version;
+            }
+            if !current_version.is_empty() {
+                return format!("Windows {}", current_version);
+            }
+        }
+
+        "Windows".to_string()
     }
 
     /// macOS 版本获取
@@ -108,7 +129,6 @@ impl SystemCollector {
     #[cfg(target_os = "linux")]
     fn get_linux_version_internal(&self) -> String {
         use std::process::Command;
-        // 尝试从 /etc/os-release 读取
         if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
             for line in content.lines() {
                 if line.starts_with("PRETTY_NAME=") {
@@ -122,7 +142,6 @@ impl SystemCollector {
             }
         }
 
-        // 回退到 uname 命令
         match Command::new("uname")
             .arg("-r")
             .output()
@@ -143,11 +162,24 @@ impl SystemCollector {
     /// 收集域名
     pub fn collect_domain(&self) -> Option<String> {
         if cfg!(windows) {
-            // Windows: 从环境变量或注册表获取
             env::var("USERDNSDOMAIN").ok()
-                .or_else(|| env::var("COMPUTERNAME").ok())
+                .or_else(|| {
+                    // 尝试从注册表获取域信息
+                    #[cfg(windows)]
+                    {
+                        use winreg::enums::*;
+                        use winreg::RegKey;
+                        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+                        hklm.open_subkey("SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters")
+                            .ok()
+                            .and_then(|key| key.get_value("Domain").ok())
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        None
+                    }
+                })
         } else {
-            // Unix: 从 hostname 获取域名部分
             match whoami::fallible::hostname() {
                 Ok(h) => {
                     h.split('.').skip(1).next().map(|d| d.to_string())
@@ -170,9 +202,91 @@ impl SystemCollector {
 
     /// 收集所有用户
     pub fn collect_users(&mut self) -> Vec<String> {
-        // sysinfo 0.30 不再直接提供用户列表
-        // 返回当前用户作为简化实现
-        vec![whoami::username()]
+        #[cfg(windows)]
+        {
+            self.collect_windows_users()
+        }
+
+        #[cfg(unix)]
+        {
+            self.collect_unix_users()
+        }
+
+        #[cfg(not(any(windows, unix)))]
+        {
+            vec![whoami::username()]
+        }
+    }
+
+    /// Windows: 收集用户列表
+    #[cfg(windows)]
+    fn collect_windows_users(&self) -> Vec<String> {
+        use std::process::Command;
+        let mut users = Vec::new();
+
+        // 使用 net user 命令获取用户列表
+        if let Ok(output) = Command::new("net")
+            .arg("user")
+            .output()
+        {
+            let content = String::from_utf8_lossy(&output.stdout);
+            // 跳过头部和尾部，解析用户列表
+            let mut in_user_list = false;
+            for line in content.lines() {
+                let line = line.trim();
+                if line.starts_with("---") {
+                    in_user_list = true;
+                    continue;
+                }
+                if line.starts_with("命令") || line.starts_with("The command") {
+                    break;
+                }
+                if in_user_list && !line.is_empty() {
+                    for user in line.split_whitespace() {
+                        let user = user.to_string();
+                        // 过滤系统账户名
+                        if !user.starts_with('$') {
+                            users.push(user);
+                        }
+                    }
+                }
+            }
+        }
+
+        if users.is_empty() {
+            users.push(whoami::username());
+        }
+
+        users
+    }
+
+    /// Unix: 收集用户列表
+    #[cfg(unix)]
+    fn collect_unix_users(&self) -> Vec<String> {
+        let mut users = Vec::new();
+
+        if let Ok(content) = std::fs::read_to_string("/etc/passwd") {
+            for line in content.lines() {
+                if line.starts_with('#') || line.is_empty() {
+                    continue;
+                }
+                let parts: Vec<&str> = line.split(':').collect();
+                if parts.len() >= 3 {
+                    if let Ok(uid) = parts[2].parse::<u32>() {
+                        // 包含普通用户 (uid >= 1000) 和 root (uid == 0)
+                        if uid == 0 || uid >= 1000 {
+                            users.push(parts[0].to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        if users.is_empty() {
+            users.push(whoami::username());
+        }
+
+        users
     }
 
     /// 收集系统运行时间
@@ -217,9 +331,26 @@ impl SystemCollector {
 
     /// 收集磁盘信息
     pub fn collect_disk_info(&self) -> Vec<DiskInfo> {
-        // sysinfo 0.30 不再直接提供磁盘列表
-        // 返回空列表作为简化实现
-        Vec::new()
+        // sysinfo 0.30+ 使用独立的 Disks 类型
+        let mut disks = Vec::new();
+
+        let sys_disks = sysinfo::Disks::new_with_refreshed_list();
+        for disk in sys_disks.list() {
+            let name = disk.name().to_string_lossy().to_string();
+            let mount_point = disk.mount_point().to_string_lossy().to_string();
+            let total_space = disk.total_space();
+            let available_space = disk.available_space();
+
+            disks.push(DiskInfo {
+                name,
+                mount_point,
+                total_space,
+                available_space,
+                is_removable: false, // sysinfo 不直接提供此信息
+            });
+        }
+
+        disks
     }
 
     /// 收集环境变量
@@ -234,14 +365,12 @@ impl SystemCollector {
     /// 检查权限
     fn check_privileges(&self) -> PrivilegeLevel {
         if cfg!(windows) {
-            // Windows: 检查是否有管理员权限
             if self.is_admin_windows() {
                 PrivilegeLevel::Admin
             } else {
                 PrivilegeLevel::User
             }
         } else {
-            // Unix: 检查是否是 root
             #[cfg(unix)]
             {
                 if self.is_root_unix() {
@@ -259,20 +388,112 @@ impl SystemCollector {
 
     /// 获取用户组
     fn get_user_groups(&self) -> Vec<String> {
-        // 简化实现，返回常见组
-        if self.check_privileges() == PrivilegeLevel::Admin || self.check_privileges() == PrivilegeLevel::Root {
-            vec!["administrators".to_string(), "root".to_string()]
-        } else {
+        #[cfg(windows)]
+        {
+            self.get_windows_groups()
+        }
+
+        #[cfg(unix)]
+        {
+            self.get_unix_groups()
+        }
+
+        #[cfg(not(any(windows, unix)))]
+        {
             vec!["users".to_string()]
         }
+    }
+
+    /// Windows: 获取用户组
+    #[cfg(windows)]
+    fn get_windows_groups(&self) -> Vec<String> {
+        use std::process::Command;
+        let mut groups = Vec::new();
+
+        // 使用 whoami /groups 获取组信息
+        if let Ok(output) = Command::new("whoami")
+            .args(&["/groups", "/fo", "csv"])
+            .output()
+        {
+            let content = String::from_utf8_lossy(&output.stdout);
+            for line in content.lines().skip(1) {
+                // CSV 格式: "组名","类型","SID","属性"
+                if let Some(group_name) = line.split(',').next() {
+                    let name = group_name.trim_matches('"').to_string();
+                    if !name.is_empty() {
+                        groups.push(name);
+                    }
+                }
+            }
+        }
+
+        if groups.is_empty() {
+            // 回退: 根据权限级别推断
+            if self.is_admin_windows() {
+                groups.push("Administrators".to_string());
+            }
+            groups.push("Users".to_string());
+        }
+
+        groups
+    }
+
+    /// Unix: 获取用户组
+    #[cfg(unix)]
+    fn get_unix_groups(&self) -> Vec<String> {
+        let mut groups = Vec::new();
+
+        // 从 /etc/group 读取
+        if let Ok(content) = std::fs::read_to_string("/etc/group") {
+            let username = whoami::username();
+            for line in content.lines() {
+                let parts: Vec<&str> = line.split(':').collect();
+                if parts.len() >= 4 {
+                    let members = parts[3];
+                    if members.split(',').any(|m| m.trim() == username) {
+                        groups.push(parts[0].to_string());
+                    }
+                }
+            }
+        }
+
+        // 也使用 id 命令获取
+        if groups.is_empty() {
+            use std::process::Command;
+            if let Ok(output) = Command::new("id").arg("-Gn").output() {
+                let content = String::from_utf8_lossy(&output.stdout);
+                groups = content.trim().split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect();
+            }
+        }
+
+        if groups.is_empty() {
+            if self.is_root_unix() {
+                groups.push("root".to_string());
+            }
+            groups.push(whoami::username());
+        }
+
+        groups
     }
 
     /// 检查 Windows 管理员权限
     #[cfg(windows)]
     fn is_admin_windows(&self) -> bool {
-        // 简化实现：检查是否可以访问系统关键路径
-        std::path::Path::new("C:\\Windows\\System32\\config").exists()
-            && std::path::Path::new("C:\\Windows\\System32\\config\\SAM").exists()
+        use std::process::Command;
+
+        // 方法: 尝试执行需要管理员权限的操作
+        // 使用 net session 命令检测管理员权限
+        if let Ok(output) = Command::new("net")
+            .args(&["session"])
+            .output()
+        {
+            // 如果命令执行成功（退出码 0），说明有管理员权限
+            return output.status.success();
+        }
+
+        false
     }
 
     /// 检查 Unix root 权限
@@ -364,8 +585,7 @@ mod tests {
     #[test]
     fn test_system_collector_creation() {
         let collector = SystemCollector::new();
-        // 验证对象创建成功
-        assert_eq!(collector.system.cpus().len(), collector.system.cpus().len());
+        assert!(collector.system.cpus().len() > 0);
     }
 
     #[test]
@@ -408,6 +628,21 @@ mod tests {
         let collector = SystemCollector::new();
         let mem_info = collector.collect_memory_info();
         assert!(mem_info.total_memory > 0);
+    }
+
+    #[test]
+    fn test_collect_disk_info() {
+        let collector = SystemCollector::new();
+        let disks = collector.collect_disk_info();
+        // 至少应该有一个磁盘
+        assert!(!disks.is_empty());
+    }
+
+    #[test]
+    fn test_collect_users() {
+        let mut collector = SystemCollector::new();
+        let users = collector.collect_users();
+        assert!(!users.is_empty());
     }
 
     #[test]
