@@ -62,6 +62,9 @@ pub struct ScanStats {
     pub total_open_ports: usize,
     /// 发现的服务数
     pub services_found: usize,
+    /// Web指纹发现数
+    #[serde(default)]
+    pub web_fingerprints_found: usize,
 }
 
 /// 主机扫描结果
@@ -81,6 +84,9 @@ pub struct HostResult {
     pub open_ports: Vec<PortInfo>,
     /// 识别的服务
     pub services: Vec<ServiceInfo>,
+    /// Web指纹识别结果
+    #[serde(default)]
+    pub web_fingerprints: Vec<WebFingerprint>,
 }
 
 /// 端口信息
@@ -209,6 +215,40 @@ pub struct DomainTrust {
     pub trust_attributes: String,
 }
 
+/// Web指纹识别结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebFingerprint {
+    /// 请求URL
+    pub url: String,
+    /// HTTP状态码
+    pub status_code: u16,
+    /// 页面标题
+    pub title: String,
+    /// Server响应头
+    pub server: Option<String>,
+    /// Favicon MMH3哈希
+    pub favicon_hash: Option<i32>,
+    /// 识别到的Web应用
+    pub web_apps: Vec<WebAppMatch>,
+    /// 响应体长度
+    pub body_length: usize,
+    /// 是否为HTTPS
+    pub is_https: bool,
+}
+
+/// Web应用匹配结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebAppMatch {
+    /// 应用名称
+    pub name: String,
+    /// 置信度 (0-100)
+    pub confidence: u8,
+    /// 版本
+    pub version: Option<String>,
+    /// 匹配类别
+    pub category: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +276,7 @@ mod tests {
             mac: None,
             open_ports: vec![],
             services: vec![],
+            web_fingerprints: vec![],
         };
         assert_eq!(host.ip, "192.168.1.1");
         assert!(host.is_alive);

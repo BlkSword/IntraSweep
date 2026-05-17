@@ -10,6 +10,8 @@ pub mod host;
 pub mod models;
 pub mod port;
 pub mod service;
+pub mod webfinger;
+pub mod webfinger_db;
 
 #[cfg(windows)]
 pub mod arp;
@@ -21,12 +23,13 @@ pub use port::{PortScanner, ProgressCallback};
 
 use chrono::Utc;
 use std::path::PathBuf;
+use webfinger::WebFingerScanner;
 
 /// 统一扫描器
 ///
 /// 提供一站式扫描接口
 pub struct Scanner {
-    config: ScanConfig,
+    pub config: ScanConfig,
     progress_callback: Option<ProgressCallback>,
 }
 
@@ -82,6 +85,7 @@ impl Scanner {
                 alive_hosts: alive_count,
                 total_open_ports: 0,
                 services_found: 0,
+                web_fingerprints_found: 0,
             },
         }
     }
@@ -120,6 +124,7 @@ impl Scanner {
                 alive_hosts: alive_hosts_count,
                 total_open_ports: open_ports_count,
                 services_found: 0,
+                web_fingerprints_found: 0,
             },
         }
     }
@@ -170,6 +175,7 @@ impl Scanner {
                 alive_hosts: alive_hosts_count,
                 total_open_ports: open_ports_count,
                 services_found: 0,
+                web_fingerprints_found: 0,
             },
         }
     }
@@ -226,6 +232,40 @@ impl Scanner {
         }
 
         ips
+    }
+
+    /// 对扫描结果中的 HTTP 端口进行 Web 指纹探测
+    pub async fn probe_web_fingerprints(&self, result: &mut ScanResult) {
+        if !self.config.web_fingerprint {
+            return;
+        }
+
+        let scanner = WebFingerScanner::new(self.config.service_timeout_ms);
+        let mut total_found = 0;
+
+        for host in &mut result.hosts {
+            if !host.is_alive {
+                continue;
+            }
+            let http_ports: Vec<u16> = host
+                .open_ports
+                .iter()
+                .filter(|p| p.state == models::PortState::Open)
+                .map(|p| p.port)
+                .filter(|p| webfinger::is_http_port(*p))
+                .collect();
+
+            if http_ports.is_empty() {
+                continue;
+            }
+
+            let ip: std::net::IpAddr = host.ip.parse().unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+            let fingerprints = scanner.probe_host_all(ip, &http_ports).await;
+            total_found += fingerprints.len();
+            host.web_fingerprints = fingerprints;
+        }
+
+        result.stats.web_fingerprints_found = total_found;
     }
 
     /// 保存扫描结果为JSON

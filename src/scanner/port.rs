@@ -104,6 +104,7 @@ impl PortScanner {
             mac: None,
             open_ports,
             services,
+            web_fingerprints: vec![],
         }
     }
 
@@ -267,47 +268,24 @@ impl PortScanner {
         results
     }
 
-    /// 根据端口号猜测服务
+    /// 根据端口号猜测服务（使用静态查找表避免重复分配）
     fn guess_service(port: u16) -> Option<String> {
-        let services = std::collections::HashMap::from([
-            (21, "ftp"),
-            (22, "ssh"),
-            (23, "telnet"),
-            (25, "smtp"),
-            (53, "domain"),
-            (80, "http"),
-            (110, "pop3"),
-            (111, "rpcbind"),
-            (135, "msrpc"),
-            (139, "netbios-ssn"),
-            (143, "imap"),
-            (389, "ldap"),
-            (443, "https"),
-            (445, "microsoft-ds"),
-            (465, "smtps"),
-            (587, "submission"),
-            (593, "http-rpc-epmap"),
-            (636, "ldaps"),
-            (993, "imaps"),
-            (995, "pop3s"),
-            (1433, "mssql"),
-            (1521, "oracle"),
-            (3306, "mysql"),
-            (3389, "ms-wbt-server"),
-            (5432, "postgresql"),
-            (5900, "vnc"),
-            (5985, "wsman"),
-            (5986, "wsman-ssl"),
-            (6379, "redis"),
-            (8000, "http-alt"),
-            (8080, "http-proxy"),
-            (8443, "https-alt"),
-            (8888, "http-alt"),
-            (9200, "elasticsearch"),
-            (27017, "mongodb"),
-        ]);
+        const SERVICES: &[(u16, &str)] = &[
+            (21, "ftp"), (22, "ssh"), (23, "telnet"), (25, "smtp"),
+            (53, "domain"), (80, "http"), (110, "pop3"), (111, "rpcbind"),
+            (135, "msrpc"), (139, "netbios-ssn"), (143, "imap"), (389, "ldap"),
+            (443, "https"), (445, "microsoft-ds"), (465, "smtps"), (587, "submission"),
+            (593, "http-rpc-epmap"), (636, "ldaps"), (993, "imaps"), (995, "pop3s"),
+            (1433, "mssql"), (1521, "oracle"), (3306, "mysql"), (3389, "ms-wbt-server"),
+            (5432, "postgresql"), (5900, "vnc"), (5985, "wsman"), (5986, "wsman-ssl"),
+            (6379, "redis"), (8000, "http-alt"), (8080, "http-proxy"), (8443, "https-alt"),
+            (8888, "http-alt"), (9200, "elasticsearch"), (27017, "mongodb"),
+        ];
 
-        services.get(&port).map(|s| s.to_string())
+        SERVICES
+            .binary_search_by_key(&port, |&(p, _)| p)
+            .ok()
+            .map(|i| SERVICES[i].1.to_string())
     }
 }
 

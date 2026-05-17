@@ -73,10 +73,11 @@ impl ArpScanner {
                     ip: ip.to_string(),
                     hostname: None,
                     is_alive: true,
-                    latency_ms: Some(0), // ARP 扫描无法获取延迟
+                    latency_ms: Some(0),
                     mac: Some(mac),
                     open_ports: vec![],
                     services: vec![],
+                    web_fingerprints: vec![],
                 });
             }
         }

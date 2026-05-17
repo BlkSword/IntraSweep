@@ -17,8 +17,8 @@ pub struct TransferStats {
 /// 在 client 和 target 之间进行双向数据转发，
 /// 直到任一方关闭连接或发生错误。
 pub async fn relay(mut client: TcpStream, mut target: TcpStream) -> TransferStats {
-    let mut client_buf = vec![0u8; 8192];
-    let mut target_buf = vec![0u8; 8192];
+    let mut client_buf = vec![0u8; 32768];
+    let mut target_buf = vec![0u8; 32768];
     let mut sent = 0u64;
     let mut received = 0u64;
 

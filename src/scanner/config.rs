@@ -147,6 +147,10 @@ pub struct ScanConfig {
     pub service_timeout_ms: u64,
     /// 仅探测常见端口的服务
     pub service_common_only: bool,
+
+    // Web指纹识别
+    /// 启用Web指纹识别
+    pub web_fingerprint: bool,
 }
 
 /// 默认主机扫描方式
@@ -181,6 +185,7 @@ impl Default for ScanConfig {
             service_detection: false,
             service_timeout_ms: 5000,
             service_common_only: true,
+            web_fingerprint: false,
         }
     }
 }
@@ -249,6 +254,12 @@ impl ScanConfig {
     pub fn with_concurrency(mut self, hosts: usize, ports: usize) -> Self {
         self.max_concurrent_hosts = hosts;
         self.max_concurrent_ports = ports;
+        self
+    }
+
+    /// 启用Web指纹识别
+    pub fn with_web_fingerprint(mut self, enabled: bool) -> Self {
+        self.web_fingerprint = enabled;
         self
     }
 

@@ -275,7 +275,7 @@ pub fn print_warning(text: &str) {
 pub fn print_banner() {
     println!();
     println!("╔════════════════════════════════════════════════════════════════════════════╗");
-    println!("║  {}", ColoredText::new("IntraSweep 内网渗透辅助工具", Color::Cyan).bold());
+    println!("║  {}", ColoredText::new(&format!("IntraSweep {}", crate::core::obfstr::sensitive::sweep_full_label()), Color::Cyan).bold());
     println!("║  {}", ColoredText::new("版本: 0.3.0  作者: BlkSword", Color::BrightBlack).bold());
     println!("╚════════════════════════════════════════════════════════════════════════════╝");
 }

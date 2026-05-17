@@ -85,6 +85,7 @@ impl HostScanner {
                     mac: arp_result.mac.clone(),
                     open_ports: vec![],
                     services: vec![],
+                    web_fingerprints: vec![],
                 });
             }
         }
@@ -139,43 +140,39 @@ impl HostScanner {
         results
     }
 
-    /// 检查单个主机是否存活
+    /// 检查单个主机是否存活（并行探测多个端口）
     async fn check_host_alive(
         target: IpAddr,
         ports: &[u16],
         timeout_dur: Duration,
         _semaphore: Arc<Semaphore>,
     ) -> HostResult {
-        let mut is_alive = false;
-        let mut latency_ms = None;
-
-        // 尝试连接常见端口
-        for &port in ports {
-            let addr = SocketAddr::new(target, port);
-            let connect_start = Instant::now();
-
-            let result = timeout(timeout_dur, TcpStream::connect(&addr)).await;
-
-            match result {
-                Ok(Ok(_stream)) => {
-                    is_alive = true;
-                    latency_ms = Some(connect_start.elapsed().as_millis() as u64);
-                    drop(_stream); // 显式关闭连接
-                    break; // 只要有一个端口开放就认为主机存活
+        // 并行探测所有端口，任一成功即判定存活
+        let results = futures::future::join_all(
+            ports.iter().map(|&port| {
+                let addr = SocketAddr::new(target, port);
+                async move {
+                    let start = Instant::now();
+                    timeout(timeout_dur, TcpStream::connect(&addr))
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .map(|_| start.elapsed().as_millis() as u64)
                 }
-                Ok(Err(_)) => continue,
-                Err(_) => continue, // 超时
-            }
-        }
+            })
+        ).await;
+
+        let latency = results.into_iter().find_map(|l| l);
 
         HostResult {
             ip: target.to_string(),
-            hostname: None, // 可以添加DNS解析
-            is_alive,
-            latency_ms,
+            hostname: None,
+            is_alive: latency.is_some(),
+            latency_ms: latency,
             mac: None,
             open_ports: vec![],
             services: vec![],
+            web_fingerprints: vec![],
         }
     }
 

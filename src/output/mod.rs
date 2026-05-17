@@ -2,5 +2,6 @@
 //!
 //! 提供美化的终端输出功能
 
-pub mod progress;
 pub mod color;
+pub mod format;
+pub mod progress;

@@ -26,6 +26,24 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tunnel::{TunnelConfig, TunnelManager, TunnelType};
 
+/// 保存扫描结果（支持 JSON/CSV 格式）
+fn save_scan_result(
+    result: &scanner::ScanResult,
+    output_fmt: output::format::OutputFormat,
+    output: Option<PathBuf>,
+) -> Result<PathBuf> {
+    let path = output.unwrap_or_else(|| {
+        let hostname = if !result.hosts.is_empty() {
+            result.hosts[0].ip.clone()
+        } else {
+            "scan".to_string()
+        };
+        PathBuf::from(output::format::generate_output_filename(&hostname, output_fmt))
+    });
+    output::format::export_result(result, &path, output_fmt)?;
+    Ok(path)
+}
+
 /// 格式化字节数
 fn format_bytes(bytes: u64) -> String {
     const KB: u64 = 1024;
@@ -85,6 +103,18 @@ impl InteractiveMenu {
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// 详细输出 (DEBUG级别日志)
+    #[arg(short = 'v', long, global = true)]
+    verbose: bool,
+
+    /// 安静模式 (仅错误)
+    #[arg(short = 'q', long, global = true)]
+    quiet: bool,
+
+    /// 日志文件路径
+    #[arg(long, global = true)]
+    log_file: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -118,12 +148,21 @@ enum Commands {
         #[arg(short, long)]
         fast: bool,
 
+        /// 启用Web指纹识别
+        #[arg(long)]
+        webfinger: bool,
+
+        /// 输出格式: json, csv (默认: json)
+        #[arg(long, default_value = "json")]
+        format: String,
+
         /// 输出文件路径 (JSON格式)
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
 
     /// 爆破功能 (缩写: cr)
+    #[clap(about = "密码爆破功能 (缩写: cr)")]
     Crack {
         /// 目标主机 (可选，不填则进入交互式模式)
         #[arg(value_name = "TARGET")]
@@ -273,6 +312,14 @@ fn print_scan_types() {
 fn main() {
     let cli = Cli::parse();
 
+    core::log::init_logging(&core::log::LogConfig {
+        verbose: cli.verbose,
+        quiet: cli.quiet,
+        log_file: cli.log_file.clone(),
+    });
+
+    tracing::debug!("启动 IntraSweep");
+
     let result = match cli.command {
         Commands::System {
             item,
@@ -297,11 +344,16 @@ fn main() {
             targets,
             scan_type,
             fast,
+            webfinger,
+            format,
             output,
         } => {
+            let output_fmt = output::format::OutputFormat::from_str(&format)
+                .unwrap_or(output::format::OutputFormat::Json);
+
             // 如果没有提供目标或扫描类型，进入交互式模式
             if targets.is_none() || scan_type.is_none() {
-                run_interactive_scan(targets, scan_type, fast, output)
+                run_interactive_scan(targets, scan_type, fast, webfinger, output_fmt, output)
             } else {
                 // 快速模式：使用默认配置
                 let targets = targets.unwrap();
@@ -325,14 +377,14 @@ fn main() {
                             print_error("端口扫描需要指定目标");
                             std::process::exit(1);
                         }
-                        run_port_scan_simple(targets, preset, output)
+                        run_port_scan_simple(targets, preset, webfinger, output_fmt, output)
                     }
                     Some("comprehensive") => {
                         if targets.is_empty() {
                             print_error("综合扫描需要指定目标");
                             std::process::exit(1);
                         }
-                        run_comprehensive_scan_simple(targets, preset, output)
+                        run_comprehensive_scan_simple(targets, preset, webfinger, output_fmt, output)
                     }
                     _ => {
                         print_error(&format!("未知的扫描类型: {}", scan_type));
@@ -432,11 +484,13 @@ fn run_interactive_scan(
     initial_targets: Option<Vec<String>>,
     initial_type: Option<String>,
     _fast: bool,
+    initial_webfinger: bool,
+    output_fmt: output::format::OutputFormat,
     output: Option<PathBuf>,
 ) -> Result<()> {
     print_banner();
     println!();
-    print_info("IntraSweep 交互式扫描配置向导");
+    print_info(&format!("IntraSweep 交互式扫描配置向导"));
     println!();
 
     // 步骤 1: 扫描目标
@@ -570,9 +624,31 @@ fn run_interactive_scan(
     }
     println!();
 
-    // 步骤 5: 高级选项（可选）
+    // 步骤 5: Web指纹识别
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [5/5] 高级选项");
+    println!("  [5/6] Web指纹识别");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    println!("Web指纹识别可以自动识别开放端口上运行的Web应用");
+    println!("(如 WebLogic, 宝塔面板, Tomcat, 泛微OA 等)");
+
+    if initial_webfinger {
+        config.web_fingerprint = true;
+        print_success("已启用Web指纹识别");
+    } else {
+        let enable_webfinger = InteractiveMenu::read_input("是否启用Web指纹识别? [y/N]: ");
+        config.web_fingerprint = enable_webfinger.to_lowercase() == "y";
+        if config.web_fingerprint {
+            print_success("已启用Web指纹识别");
+        } else {
+            print_info("已跳过Web指纹识别");
+        }
+    }
+    println!();
+
+    // 步骤 6: 高级选项（可选）
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("  [6/6] 高级选项");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
@@ -598,6 +674,14 @@ fn run_interactive_scan(
             "禁用"
         }
     );
+    println!(
+        "  Web指纹:     {}",
+        if config.web_fingerprint {
+            "启用"
+        } else {
+            "禁用"
+        }
+    );
     println!("  主机扫描方式: {}", config.host_scan_method.display_name());
     println!("  端口扫描方式: {}", config.port_scan_method.display_name());
     println!();
@@ -615,9 +699,9 @@ fn run_interactive_scan(
     // 执行扫描
     match scan_type.as_str() {
         "host" => run_host_scan(targets, ScanPreset::Standard, None, output),
-        "port" => run_port_scan_from_config(targets, config, output),
-        "comprehensive" => run_comprehensive_scan_from_config(targets, config, output),
-        _ => run_port_scan_from_config(targets, config, output),
+        "port" => run_port_scan_from_config(targets, config, output_fmt, output),
+        "comprehensive" => run_comprehensive_scan_from_config(targets, config, output_fmt, output),
+        _ => run_port_scan_from_config(targets, config, output_fmt, output),
     }
 }
 
@@ -736,7 +820,7 @@ fn print_banner() {
     println!("|___|___|  /__|  |__|  (____  /_______  / \\/\\_/  \\___  >\\___  >   __/ ");
     println!("         \\/                 \\/        \\/             \\/     \\/|__|    ");
     println!();
-    println!("                       IntraSweep - 内网渗透辅助工具 v0.3.0");
+    println!("                       {}", core::obfstr::sensitive::banner_label());
     println!();
 }
 
@@ -1221,7 +1305,7 @@ fn run_host_scan(
 
     print_scan_results(&result);
 
-    if let Ok(path) = scanner.save_result(&result, output) {
+    if let Ok(path) = save_scan_result(&result, output::format::OutputFormat::Json, output) {
         println!();
         print_success(&format!("结果已保存到: {}", path.display()));
     }
@@ -1256,7 +1340,7 @@ fn run_domain_scan(output: Option<PathBuf>) -> Result<()> {
 
     print_domain_scan_results(&result);
 
-    if let Ok(path) = scanner.save_result(&convert_domain_result_to_scan(result), output) {
+    if let Ok(path) = save_scan_result(&convert_domain_result_to_scan(result), output::format::OutputFormat::Json, output) {
         println!();
         print_success(&format!("结果已保存到: {}", path.display()));
     }
@@ -1278,14 +1362,22 @@ fn preset_to_config(preset: ScanPreset) -> ScanConfig {
 fn run_port_scan_simple(
     targets: Vec<String>,
     preset: ScanPreset,
+    webfinger: bool,
+    output_fmt: output::format::OutputFormat,
     output: Option<PathBuf>,
 ) -> Result<()> {
-    let config = preset_to_config(preset);
+    let mut config = preset_to_config(preset);
+    if webfinger {
+        config.web_fingerprint = true;
+    }
 
     println!();
     print_info(&format!("开始端口扫描"));
     print_info(&format!("目标: {}", targets.join(", ")));
     print_info(&format!("预设: {:?}", preset));
+    if webfinger {
+        print_success("Web指纹: 启用");
+    }
     println!();
 
     // 创建进度条
@@ -1297,14 +1389,19 @@ fn run_port_scan_simple(
         let percent = (current as f64 / total as f64 * 100.0) as u64;
         progress_clone.set_position(percent as usize);
     }));
-    let result = rt.block_on(scanner.port_scan(targets));
+    let mut result = rt.block_on(scanner.port_scan(targets));
+
+    if scanner.config.web_fingerprint {
+        print_info("正在进行Web指纹探测...");
+        rt.block_on(scanner.probe_web_fingerprints(&mut result));
+    }
 
     progress.finish_with_message("扫描完成!");
     println!();
 
     print_scan_results(&result);
 
-    if let Ok(path) = scanner.save_result(&result, output) {
+    if let Ok(path) = save_scan_result(&result, output_fmt, output) {
         println!();
         print_success(&format!("结果已保存到: {}", path.display()));
     }
@@ -1316,14 +1413,22 @@ fn run_port_scan_simple(
 fn run_comprehensive_scan_simple(
     targets: Vec<String>,
     preset: ScanPreset,
+    webfinger: bool,
+    output_fmt: output::format::OutputFormat,
     output: Option<PathBuf>,
 ) -> Result<()> {
-    let config = preset_to_config(preset);
+    let mut config = preset_to_config(preset);
+    if webfinger {
+        config.web_fingerprint = true;
+    }
 
     println!();
     print_info(&format!("开始综合扫描"));
     print_info(&format!("目标: {}", targets.join(", ")));
     print_info(&format!("预设: {:?}", preset));
+    if webfinger {
+        print_success("Web指纹: 启用");
+    }
     println!();
 
     // 创建进度条
@@ -1335,14 +1440,19 @@ fn run_comprehensive_scan_simple(
         let percent = (current as f64 / total as f64 * 100.0) as u64;
         progress_clone.set_position(percent as usize);
     }));
-    let result = rt.block_on(scanner.comprehensive_scan(targets));
+    let mut result = rt.block_on(scanner.comprehensive_scan(targets));
+
+    if scanner.config.web_fingerprint {
+        print_info("正在进行Web指纹探测...");
+        rt.block_on(scanner.probe_web_fingerprints(&mut result));
+    }
 
     progress.finish_with_message("扫描完成!");
     println!();
 
     print_scan_results(&result);
 
-    if let Ok(path) = scanner.save_result(&result, output) {
+    if let Ok(path) = save_scan_result(&result, output_fmt, output) {
         println!();
         print_success(&format!("结果已保存到: {}", path.display()));
     }
@@ -1354,6 +1464,7 @@ fn run_comprehensive_scan_simple(
 fn run_port_scan_from_config(
     targets: Vec<String>,
     config: ScanConfig,
+    output_fmt: output::format::OutputFormat,
     output: Option<PathBuf>,
 ) -> Result<()> {
     println!();
@@ -1367,6 +1478,9 @@ fn run_port_scan_from_config(
     if config.service_detection {
         print_success("服务探测: 启用");
     }
+    if config.web_fingerprint {
+        print_success("Web指纹: 启用");
+    }
     println!();
 
     // 创建进度条
@@ -1378,14 +1492,20 @@ fn run_port_scan_from_config(
         let percent = (current as f64 / total as f64 * 100.0) as u64;
         progress_clone.set_position(percent as usize);
     }));
-    let result = rt.block_on(scanner.port_scan(targets));
+    let mut result = rt.block_on(scanner.port_scan(targets));
+
+    // Web指纹探测
+    if scanner.config.web_fingerprint {
+        print_info("正在进行Web指纹探测...");
+        rt.block_on(scanner.probe_web_fingerprints(&mut result));
+    }
 
     progress.finish_with_message("扫描完成!");
     println!();
 
     print_scan_results(&result);
 
-    if let Ok(path) = scanner.save_result(&result, output) {
+    if let Ok(path) = save_scan_result(&result, output_fmt, output) {
         println!();
         print_success(&format!("结果已保存到: {}", path.display()));
     }
@@ -1397,6 +1517,7 @@ fn run_port_scan_from_config(
 fn run_comprehensive_scan_from_config(
     targets: Vec<String>,
     config: ScanConfig,
+    output_fmt: output::format::OutputFormat,
     output: Option<PathBuf>,
 ) -> Result<()> {
     println!();
@@ -1417,6 +1538,9 @@ fn run_comprehensive_scan_from_config(
             config.service_timeout_ms
         ));
     }
+    if config.web_fingerprint {
+        print_success("Web指纹: 启用");
+    }
     println!();
 
     // 创建进度条
@@ -1428,14 +1552,20 @@ fn run_comprehensive_scan_from_config(
         let percent = (current as f64 / total as f64 * 100.0) as u64;
         progress_clone.set_position(percent as usize);
     }));
-    let result = rt.block_on(scanner.comprehensive_scan(targets));
+    let mut result = rt.block_on(scanner.comprehensive_scan(targets));
+
+    // Web指纹探测
+    if scanner.config.web_fingerprint {
+        print_info("正在进行Web指纹探测...");
+        rt.block_on(scanner.probe_web_fingerprints(&mut result));
+    }
 
     progress.finish_with_message("扫描完成!");
     println!();
 
     print_scan_results(&result);
 
-    if let Ok(path) = scanner.save_result(&result, output) {
+    if let Ok(path) = save_scan_result(&result, output_fmt, output) {
         println!();
         print_success(&format!("结果已保存到: {}", path.display()));
     }
@@ -1456,7 +1586,7 @@ fn run_interactive_crack(
 ) -> Result<()> {
     print_banner();
     println!();
-    print_info("IntraSweep 交互式爆破配置向导");
+    print_info(&format!("IntraSweep 交互式{}配置向导", core::obfstr::sensitive::crack_label()));
     println!();
 
     // 步骤 1: 目标主机
@@ -1994,7 +2124,7 @@ fn run_crack(
     // 显示结果
     if result.is_success() {
         println!("╔════════════════════════════════════════════════════════════════════════════╗");
-        println!("║  {}", colorize("爆破成功!", Color::BrightGreen));
+        println!("║  {}", colorize(&format!("{}!", core::obfstr::sensitive::crack_success_label()), Color::BrightGreen));
         println!("╠════════════════════════════════════════════════════════════════════════════╣");
         println!("║  目标:        {}:{}", result.target, result.port);
         println!("║  服务:        {}", result.service);
@@ -2008,7 +2138,7 @@ fn run_crack(
         println!("╚════════════════════════════════════════════════════════════════════════════╝");
     } else {
         println!("╔════════════════════════════════════════════════════════════════════════════╗");
-        println!("║  {}", colorize("爆破失败", Color::BrightRed));
+        println!("║  {}", colorize(&core::obfstr::sensitive::crack_failed_label(), Color::BrightRed));
         println!("╠════════════════════════════════════════════════════════════════════════════╣");
         println!("║  目标:        {}:{}", result.target, result.port);
         println!("║  服务:        {}", result.service);
@@ -2034,6 +2164,7 @@ fn convert_domain_result_to_scan(
         mac: None,
         open_ports: vec![],
         services: vec![],
+        web_fingerprints: vec![],
     };
 
     if let Some(ref dc) = domain_result.domain_controller {
@@ -2058,6 +2189,7 @@ fn convert_domain_result_to_scan(
             alive_hosts: if domain_result.is_joined { 1 } else { 0 },
             total_open_ports: 0,
             services_found: 0,
+            web_fingerprints_found: 0,
         },
     }
 }
@@ -2204,6 +2336,9 @@ fn print_scan_results(result: &scanner::ScanResult) {
     );
     println!("║  存活主机:     {:<60}║", result.stats.alive_hosts);
     println!("║  开放端口:     {:<60}║", result.stats.total_open_ports);
+    if result.stats.web_fingerprints_found > 0 {
+        println!("║  Web指纹:     {:<60}║", result.stats.web_fingerprints_found);
+    }
     println!("╠════════════════════════════════════════════════════════════════════════════╣");
     println!("║  扫描结果");
     println!("╠────────────────────────────────────────────────────────────────────────────╣");
@@ -2233,6 +2368,29 @@ fn print_scan_results(result: &scanner::ScanResult) {
                         ports.join(", ")
                     }
                 );
+
+                // Web指纹信息
+                if !host.web_fingerprints.is_empty() {
+                    for wf in &host.web_fingerprints {
+                        if !wf.web_apps.is_empty() {
+                            let apps: Vec<String> = wf.web_apps.iter()
+                                .map(|a| format!("{}{}", a.name, a.version.as_deref().map(|v| format!(" {}", v)).unwrap_or_default()))
+                                .collect();
+                            println!(
+                                "║    {} {:<74}║",
+                                colorize("W", Color::Cyan),
+                                apps.join(", ")
+                            );
+                        }
+                        if !wf.title.is_empty() {
+                            println!(
+                                "║    {} {:<74}║",
+                                colorize("T", Color::Yellow),
+                                wf.title
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -2430,7 +2588,7 @@ fn run_interactive_tunnel(
 ) -> Result<()> {
     print_banner();
     println!();
-    print_info("IntraSweep 交互式隧道配置向导");
+    print_info(&format!("IntraSweep 交互式{}配置向导", core::obfstr::sensitive::tunnel_label()));
     println!();
 
     // 步骤 1: 隧道类型
@@ -2671,10 +2829,10 @@ fn run_interactive_tunnel(
 /// 格式化隧道类型
 fn format_tunnel_type(ty: &str) -> String {
     match ty {
-        "forward" => "正向隧道".to_string(),
-        "reverse" => "反向隧道".to_string(),
-        "socks5" => "SOCKS5代理".to_string(),
-        "chain" => "链式隧道".to_string(),
+        "forward" => core::obfstr::sensitive::forward_tunnel_label(),
+        "reverse" => core::obfstr::sensitive::reverse_tunnel_label(),
+        "socks5" => core::obfstr::sensitive::socks5_proxy_label(),
+        "chain" => core::obfstr::sensitive::chain_tunnel_label(),
         _ => ty.to_string(),
     }
 }

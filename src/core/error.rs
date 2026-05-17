@@ -22,6 +22,10 @@ pub enum FlyWheelError {
     #[error("序列化错误: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    /// CSV错误
+    #[error("CSV错误: {0}")]
+    Csv(#[from] csv::Error),
+
     /// 不支持的操作
     #[error("不支持的操作: {operation}")]
     Unsupported { operation: String },

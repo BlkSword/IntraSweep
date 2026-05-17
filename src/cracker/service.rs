@@ -206,7 +206,7 @@ impl CrackResult {
             username,
             password: Some(password),
             status: CrackStatus::Success,
-            message: "爆破成功".to_string(),
+            message: crate::core::obfstr::sensitive::crack_success_label(),
             elapsed_ms,
         }
     }

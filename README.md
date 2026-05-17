@@ -7,8 +7,11 @@ IntraSweep 是一个基于 Rust 开发的高性能内网渗透辅助工具，提
 - **高性能扫描** - 异步 I/O 高并发架构
 - **交互式向导** - 无需记忆复杂参数
 - **实时进度** - 可视化进度反馈
-- **密码爆破** - 支持多种服务
+- **Web 指纹识别** - 自动识别内网 Web 应用（WebLogic、宝塔面板、泛微OA 等）
+- **密码爆破** - 支持多种服务（SSH/RDP/Redis/PostgreSQL/MySQL/MSSQL/MongoDB/WinRM）
 - **内网穿透** - 正向/反向隧道、SOCKS5 代理、链式跳板
+- **格式化输出** - 支持 JSON/CSV 格式导出
+- **OPSEC 优化** - 发布二进制体积优化、关键字符串混淆
 
 ## 安装
 
@@ -37,6 +40,13 @@ intrasweep scan 192.168.1.1              # 交互式配置
 intrasweep scan 192.168.1.0/24 port      # 端口扫描
 intrasweep scan 192.168.1.0/24 host      # 主机发现
 intrasweep scan 192.168.1.0/24 comprehensive  # 综合扫描
+
+# Web 指纹识别
+intrasweep scan 192.168.1.0/24 port --webfinger        # 端口扫描 + Web 指纹
+intrasweep scan 192.168.1.0/24 comprehensive --webfinger -o result.json
+
+# CSV 格式输出
+intrasweep scan 192.168.1.0/24 port --format csv -o result.csv
 ```
 
 ### 系统信息收集
@@ -45,7 +55,7 @@ intrasweep scan 192.168.1.0/24 comprehensive  # 综合扫描
 intrasweep system all        # 全量收集
 intrasweep system network    # 网络信息
 intrasweep system domain     # 域环境信息
-intrasweep system credential  # 凭据信息
+intrasweep system credential # 凭据信息
 ```
 
 ### 密码爆破
@@ -74,6 +84,14 @@ intrasweep tunnel socks5 -L 1080
 intrasweep tunnel chain -H 10.0.0.1:2222 -H 10.0.0.2:3333 -t 192.168.2.100:80
 ```
 
+### 全局选项
+
+```bash
+intrasweep -v scan ...       # 详细输出 (DEBUG 级别日志)
+intrasweep -q scan ...       # 安静模式 (仅错误)
+intrasweep --log-file scan.log scan ...  # 日志写入文件
+```
+
 ## 命令参考
 
 ### System 命令
@@ -96,6 +114,13 @@ intrasweep tunnel chain -H 10.0.0.1:2222 -H 10.0.0.2:3333 -t 192.168.2.100:80
 | host | 主机发现 |
 | comprehensive | 综合扫描 |
 
+| 参数 | 说明 |
+|-----|------|
+| `--fast` | 快速扫描 |
+| `--webfinger` | 启用 Web 指纹识别 |
+| `--format <json\|csv>` | 输出格式 (默认: json) |
+| `-o <file>` | 输出文件 |
+
 ### Crack 命令
 
 支持服务：`ssh`, `rdp`, `redis`, `postgres`, `mysql`, `mssql`, `mongodb`, `winrm`
@@ -113,7 +138,7 @@ intrasweep tunnel chain -H 10.0.0.1:2222 -H 10.0.0.2:3333 -t 192.168.2.100:80
 ### Tunnel 命令
 
 | 类型 | 缩写 | 功能 |
-|-----|------|------|
+|-----|------|-----|
 | forward | fo | 正向 TCP 端口转发 |
 | reverse | re | 反向 TCP 端口转发 |
 | socks5 | so | SOCKS5 代理服务器 |
@@ -129,6 +154,20 @@ intrasweep tunnel chain -H 10.0.0.1:2222 -H 10.0.0.2:3333 -t 192.168.2.100:80
 | `--socks5-password` | SOCKS5 认证密码 |
 | `-c, --max-connections` | 最大并发连接（默认: 100）|
 | `--timeout` | 超时时间（秒，默认: 30）|
+
+## Web 指纹识别
+
+内置 30+ 条指纹规则，覆盖常见内网 Web 应用：
+
+| 类别 | 支持的应用 |
+|------|-----------|
+| 中间件 | WebLogic, Tomcat, JBoss, WebSphere, Nginx, IIS, OpenResty |
+| 管理面板 | 宝塔面板, phpMyAdmin, Adminer |
+| OA 系统 | 泛微OA, 致远OA, 蓝凌OA, 通达OA |
+| 开发工具 | Jenkins, GitLab, Gitea, SonarQube |
+| 基础设施 | Nacos, SkyWalking, Elasticsearch, Harbor, RabbitMQ, Grafana, Prometheus |
+| 框架 | Spring Boot, Django Admin, ThinkPHP |
+| 其他 | Zabbix, Confluence, Jira |
 
 ## 扫描预设
 

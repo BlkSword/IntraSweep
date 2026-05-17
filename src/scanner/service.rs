@@ -534,16 +534,17 @@ impl ServiceIdentifier {
         }
     }
 
-    /// 批量识别多个端口的服务
+    /// 批量识别多个端口的服务（并行探测）
     pub async fn identify_batch(&self, ip: IpAddr, ports: Vec<u16>) -> Vec<(u16, Option<ServiceInfo>)> {
-        let mut results = Vec::new();
+        let probes: Vec<_> = ports
+            .into_iter()
+            .map(|port| async move {
+                let info = self.identify_service_async(ip, port).await;
+                (port, info)
+            })
+            .collect();
 
-        for port in ports {
-            let info = self.identify_service_async(ip, port).await;
-            results.push((port, info));
-        }
-
-        results
+        futures::future::join_all(probes).await
     }
 }
 

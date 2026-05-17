@@ -44,7 +44,7 @@ pub async fn run_crack(
 
     // 打印信息
     println!();
-    println!("开始 {} 爆破...", print_info);
+    println!("开始 {} {}...", print_info, crate::core::obfstr::sensitive::crack_label());
     println!("目标: {}:{}", config.target, config.port);
     if config.usernames.is_empty() || !service.requires_username() {
         println!("密码数: {}", config.passwords.len());
@@ -55,7 +55,11 @@ pub async fn run_crack(
     println!("总尝试次数: {}", total);
     println!();
 
-    let mut tasks = Vec::new();
+    let mut tasks = Vec::with_capacity(total.min(config.concurrency * 2));
+
+    // 将闭包包装一次，所有任务共享
+    let try_connect_arc: Arc<dyn Fn(Option<String>, String, String, u16, Duration) -> bool + Send + Sync> =
+        Arc::new(try_connect);
 
     for attempt in attempts {
         // 如果已经找到，不再派发新任务
@@ -69,10 +73,7 @@ pub async fn run_crack(
         let port = config.port;
         let timeout = config.timeout;
         let delay = config.delay_ms;
-        let try_connect = &try_connect;
-
-        let try_connect_owned: Arc<dyn Fn(Option<String>, String, String, u16, Duration) -> bool + Send + Sync> =
-            Arc::new(try_connect.clone());
+        let try_connect_owned = try_connect_arc.clone();
 
         let task = tokio::spawn(async move {
             // 如果已经找到，直接跳过
@@ -107,6 +108,12 @@ pub async fn run_crack(
             }
 
             if result {
+                tracing::info!(
+                    "找到有效凭据 - {}: {}@{}:{}",
+                    service.name(),
+                    username.as_deref().unwrap_or("-"),
+                    target, port
+                );
                 found.store(true, Ordering::Relaxed);
                 Some(AttemptResult {
                     attempt,
