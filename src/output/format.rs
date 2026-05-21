@@ -159,6 +159,13 @@ pub fn generate_output_filename(base_name: &str, format: OutputFormat) -> String
     format!("intrasweep-{}-{}{}", base_name, timestamp, format.extension())
 }
 
+/// 导出漏洞扫描结果为 JSON
+pub fn export_vuln_json(result: &crate::vuln::VulnScanResult, path: &Path) -> Result<()> {
+    let json = serde_json::to_string_pretty(result)?;
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

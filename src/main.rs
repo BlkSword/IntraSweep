@@ -7,6 +7,7 @@ mod modules;
 mod output;
 mod scanner;
 mod tunnel;
+mod vuln;
 
 use clap::{Parser, Subcommand};
 use collector::models::{CredentialReport, FileReport, NetworkReport, ProcessReport};
@@ -239,6 +240,42 @@ enum Commands {
         #[arg(short, long, default_value = "30")]
         timeout: u64,
     },
+
+    /// 漏洞扫描功能 (缩写: v)
+    #[clap(about = "漏洞扫描功能 (缩写: v)")]
+    Vuln {
+        /// 扫描目标 (IP/CIDR/host:port) - 可选，不填则进入交互式模式
+        #[arg(value_name = "TARGETS")]
+        targets: Option<Vec<String>>,
+
+        /// 外部 PoC 文件或目录
+        #[arg(long)]
+        poc_file: Option<PathBuf>,
+
+        /// 按严重性过滤: critical, high, medium, low, info
+        #[arg(long)]
+        severity: Option<String>,
+
+        /// 按类别过滤
+        #[arg(long)]
+        category: Option<String>,
+
+        /// 输出格式: json, csv (默认: json)
+        #[arg(long, default_value = "json")]
+        format: String,
+
+        /// 输出文件路径
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// 并发数 (默认: 20)
+        #[arg(short, long, default_value = "20")]
+        concurrency: usize,
+
+        /// 超时时间(秒) (默认: 10)
+        #[arg(short, long, default_value = "10")]
+        timeout: u64,
+    },
 }
 
 // ============================================================
@@ -469,6 +506,26 @@ fn main() {
                     max_connections,
                     timeout,
                 )
+            }
+        }
+
+        Commands::Vuln {
+            targets,
+            poc_file,
+            severity,
+            category,
+            format,
+            output,
+            concurrency,
+            timeout,
+        } => {
+            let output_fmt = output::format::OutputFormat::from_str(&format)
+                .unwrap_or(output::format::OutputFormat::Json);
+
+            if targets.is_none() {
+                run_interactive_vuln(poc_file, severity, category, output_fmt, output, concurrency, timeout)
+            } else {
+                run_vuln_scan(targets.unwrap(), poc_file, severity, category, output_fmt, output, concurrency, timeout)
             }
         }
     };
@@ -2843,4 +2900,303 @@ fn print_tunnel_types() {
     for (full, abbr) in TUNNEL_TYPES {
         println!("  {} ({})", full, abbr);
     }
+}
+
+// ============================================================
+// 漏洞扫描功能
+// ============================================================
+
+/// 运行漏洞扫描
+fn run_vuln_scan(
+    targets: Vec<String>,
+    poc_file: Option<PathBuf>,
+    severity: Option<String>,
+    category: Option<String>,
+    output_fmt: output::format::OutputFormat,
+    output: Option<PathBuf>,
+    concurrency: usize,
+    timeout: u64,
+) -> Result<()> {
+    print_banner();
+    println!();
+
+    let vuln_label = core::obfstr::sensitive::vuln_label();
+    print_info(&format!("开始{}...", vuln_label));
+
+    // 加载 PoC 规则
+    let mut pocs = vuln::builtin::get_builtin_pocs();
+
+    // 外部 PoC 加载
+    if let Some(ref poc_path) = poc_file {
+        match vuln::loader::load_pocs_from_path(poc_path) {
+            Ok(external_pocs) => {
+                print_success(&format!("已加载 {} 条外部PoC", external_pocs.len()));
+                pocs.extend(external_pocs);
+            }
+            Err(e) => {
+                print_error(&format!("加载外部PoC失败: {}", e));
+            }
+        }
+    }
+
+    // 过滤
+    let sev_filter = severity
+        .as_deref()
+        .and_then(vuln::poc::Severity::from_str_opt);
+    if sev_filter.is_some() || category.is_some() {
+        pocs = vuln::builtin::filter_builtin_pocs(sev_filter, category.as_deref());
+        if let Some(ref sev) = sev_filter {
+            println!("严重性过滤: {}", sev.display_name());
+        }
+        if let Some(ref cat) = category {
+            println!("类别过滤: {}", cat);
+        }
+    }
+
+    // 展开目标
+    let expanded = vuln::expand_targets(&targets);
+
+    println!("目标数: {}", expanded.len());
+    println!("PoC规则数: {}", pocs.len());
+    println!("并发数: {}", concurrency);
+    println!();
+
+    // 执行扫描
+    let config = vuln::VulnScanConfig::new(expanded, pocs)
+        .with_timeout(std::time::Duration::from_secs(timeout))
+        .with_concurrency(concurrency);
+
+    let scanner = vuln::VulnScanner::new(config);
+    let rt = tokio::runtime::Runtime::new()?;
+    let result = rt.block_on(scanner.scan());
+
+    // 打印结果
+    print_vuln_results(&result);
+
+    // 保存结果
+    let path = output.unwrap_or_else(|| {
+        let base = if !result.targets.is_empty() {
+            result.targets[0].replace('.', "_").replace(':', "_")
+        } else {
+            "vuln".to_string()
+        };
+        PathBuf::from(output::format::generate_output_filename(&base, output_fmt))
+    });
+
+    match output_fmt {
+        output::format::OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&result)?;
+            std::fs::write(&path, json)?;
+        }
+        output::format::OutputFormat::Csv => {
+            export_vuln_csv(&result, &path)?;
+        }
+    }
+
+    print_success(&format!("结果已保存: {}", path.display()));
+    Ok(())
+}
+
+/// 交互式漏洞扫描向导
+fn run_interactive_vuln(
+    poc_file: Option<PathBuf>,
+    severity: Option<String>,
+    category: Option<String>,
+    output_fmt: output::format::OutputFormat,
+    output: Option<PathBuf>,
+    concurrency: usize,
+    timeout: u64,
+) -> Result<()> {
+    print_banner();
+    println!();
+    let vuln_label = core::obfstr::sensitive::vuln_label();
+    print_info(&format!("IntraSweep 交互式{}向导", vuln_label));
+    println!();
+
+    // 步骤 1: 目标输入
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("  [1/4] 扫描目标");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    println!("输入格式: IP, CIDR, IP范围, host:port (逗号分隔)");
+    println!();
+
+    let targets_input = InteractiveMenu::read_input("请输入扫描目标: ");
+    if targets_input.is_empty() {
+        print_error("未输入目标");
+        return Ok(());
+    }
+    let targets: Vec<String> = targets_input.split(',').map(|s| s.trim().to_string()).collect();
+    println!();
+
+    // 步骤 2: PoC 选择
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("  [2/4] PoC 规则");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    println!("  1. 使用内置PoC规则 ({} 条)", vuln::builtin::get_builtin_pocs().len());
+    println!("  2. 加载外部PoC文件");
+    println!("  3. 内置 + 外部");
+    println!();
+
+    let choice = InteractiveMenu::read_number("请选择 [1-3]: ", 1, 3);
+    let external_path = if choice >= 2 {
+        let path = InteractiveMenu::read_input("请输入PoC文件/目录路径: ");
+        if !path.is_empty() {
+            Some(PathBuf::from(path))
+        } else {
+            None
+        }
+    } else {
+        poc_file
+    };
+
+    // 步骤 3: 严重性过滤
+    println!();
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("  [3/4] 严重性过滤 (可选)");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    println!("  可选: critical, high, medium, low, info (留空不过滤)");
+    let sev_input = InteractiveMenu::read_input("严重性: ");
+    let final_severity = if sev_input.is_empty() { severity } else { Some(sev_input) };
+
+    // 步骤 4: 确认
+    println!();
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("  [4/4] 确认配置");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    println!("  目标: {}", targets.join(", "));
+    println!("  并发数: {}", concurrency);
+    println!("  超时: {}s", timeout);
+    if final_severity.is_some() {
+        println!("  严重性过滤: {}", final_severity.as_deref().unwrap());
+    }
+    if external_path.is_some() {
+        println!("  外部PoC: {:?}", external_path.as_ref().unwrap());
+    }
+    println!();
+
+    let confirm = InteractiveMenu::read_input("开始扫描? [Y/n]: ");
+    if confirm.eq_ignore_ascii_case("n") {
+        print_info("已取消");
+        return Ok(());
+    }
+
+    run_vuln_scan(targets, external_path, final_severity, category, output_fmt, output, concurrency, timeout)
+}
+
+/// 打印漏洞扫描结果
+fn print_vuln_results(result: &vuln::VulnScanResult) {
+    println!();
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("  {} 结果", core::obfstr::sensitive::vuln_label());
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+
+    // 统计
+    println!("  扫描目标: {}", result.stats.total_targets);
+    println!("  PoC规则数: {}", result.stats.total_pocs);
+    println!("  总请求数: {}", result.stats.total_requests);
+    println!("  耗时: {:.2}s", result.duration_secs);
+    println!();
+
+    if result.findings.is_empty() {
+        print_info("未发现漏洞");
+        return;
+    }
+
+    // 严重性统计
+    println!("  发现漏洞: {}", result.stats.vulnerabilities_found);
+    if result.stats.critical_count > 0 {
+        println!("  {}{}严重: {}{}", "\x1b[31m", "■", result.stats.critical_count, "\x1b[0m");
+    }
+    if result.stats.high_count > 0 {
+        println!("  {}{}高危: {}{}", "\x1b[33m", "■", result.stats.high_count, "\x1b[0m");
+    }
+    if result.stats.medium_count > 0 {
+        println!("  {}{}中危: {}{}", "\x1b[36m", "■", result.stats.medium_count, "\x1b[0m");
+    }
+    if result.stats.low_count > 0 {
+        println!("  {}{}低危: {}{}", "\x1b[32m", "■", result.stats.low_count, "\x1b[0m");
+    }
+    println!();
+
+    // 漏洞详情
+    println!("┌────────────────────────────────────────────────────────────────────────────┐");
+    println!("│ {:<18} {:<6} {:<15} {:<8} {:<20} │",
+        "目标", "端口", "漏洞ID", "严重性", "名称");
+    println!("├────────────────────────────────────────────────────────────────────────────┤");
+
+    for finding in &result.findings {
+        let severity_str = format!("{}{}{}", finding.severity.color_code(),
+            finding.severity.display_name(), "\x1b[0m");
+        let target = if finding.target.len() > 16 {
+            format!("{}...", &finding.target[..13])
+        } else {
+            finding.target.clone()
+        };
+        let name = if finding.vuln_name.len() > 18 {
+            format!("{}...", &finding.vuln_name[..15])
+        } else {
+            finding.vuln_name.clone()
+        };
+
+        println!("│ {:<18} {:<6} {:<15} {:<4}    {:<20} │",
+            target, finding.port, finding.vuln_id, severity_str, name);
+    }
+
+    println!("└────────────────────────────────────────────────────────────────────────────┘");
+    println!();
+
+    // 详细信息
+    for finding in &result.findings {
+        println!("  {}[{}] {} {}{} - {}:{}",
+            finding.severity.color_code(),
+            finding.severity.display_name(),
+            finding.vuln_id,
+            finding.vuln_name,
+            "\x1b[0m",
+            finding.target,
+            finding.port);
+        if !finding.description.is_empty() {
+            println!("    {}", finding.description);
+        }
+        if !finding.evidence.is_empty() {
+            let evidence: String = finding.evidence.chars().take(100).collect();
+            println!("    证据: {}", evidence.replace('\n', " ").replace('\r', ""));
+        }
+        if !finding.remediation.is_empty() {
+            println!("    修复: {}", finding.remediation);
+        }
+        println!();
+    }
+}
+
+/// 导出漏洞结果为 CSV
+fn export_vuln_csv(result: &vuln::VulnScanResult, path: &std::path::Path) -> Result<()> {
+    let mut wtr = csv::Writer::from_path(path)?;
+
+    wtr.write_record(&[
+        "目标", "端口", "漏洞ID", "漏洞名称", "严重性", "类别",
+        "描述", "证据", "修复建议",
+    ])?;
+
+    for finding in &result.findings {
+        wtr.write_record(&[
+            &finding.target,
+            &finding.port.to_string(),
+            &finding.vuln_id,
+            &finding.vuln_name,
+            finding.severity.display_name(),
+            &finding.category,
+            &finding.description,
+            &finding.evidence,
+            &finding.remediation,
+        ])?;
+    }
+
+    wtr.flush()?;
+    Ok(())
 }

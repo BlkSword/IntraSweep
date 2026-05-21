@@ -26,6 +26,18 @@ pub enum FlyWheelError {
     #[error("CSV错误: {0}")]
     Csv(#[from] csv::Error),
 
+    /// YAML解析错误
+    #[error("YAML解析错误: {0}")]
+    Yaml(#[from] serde_yaml::Error),
+
+    /// 正则表达式错误
+    #[error("正则错误: {0}")]
+    Regex(#[from] regex::Error),
+
+    /// PoC规则错误
+    #[error("PoC规则错误: {message}")]
+    PocRule { message: String },
+
     /// 不支持的操作
     #[error("不支持的操作: {operation}")]
     Unsupported { operation: String },
