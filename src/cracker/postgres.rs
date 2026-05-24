@@ -28,7 +28,7 @@ impl Cracker for PostgresCracker {
         let target = config.target.clone();
         let port = config.port;
 
-        base::run_crack(config, CrackService::Postgres, "PostgreSQL", move |username, password, _, _, timeout| {
+        base::run_crack(config, CrackService::Postgres, "PostgreSQL", move |username, password, _, _, _timeout| {
             let username = username.unwrap_or_else(|| "postgres".to_string());
             let conn_str = format!(
                 "host={} port={} user={} password={} dbname=postgres",

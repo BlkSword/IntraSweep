@@ -92,29 +92,29 @@ impl ArpScanner {
 #[cfg(windows)]
 fn probe_host(target: Ipv4Addr) -> Option<(Ipv4Addr, String)> {
     use windows::Win32::Networking::WinSock::inet_addr;
+    use std::ffi::CString;
 
     // 将 IP 转换为网络字节序
-    let ip_str = target.to_string();
-    let dest_ip = unsafe { inet_addr(ip_str.as_ptr() as *const i8) };
+    let ip_str = CString::new(target.to_string()).ok()?;
+    let dest_ip = unsafe { inet_addr(windows::core::PCSTR(ip_str.as_ptr() as *const u8)) };
     if dest_ip == 0 {
         return None;
     }
 
-    let mut mac_addr = [0u32; 2];
+    let mut mac_addr = [0u8; 8];
     let mut mac_len = 6u32;
 
     // 调用 SendARP
     let result = unsafe {
-        SendARP(dest_ip, 0, mac_addr.as_mut_ptr(), &mut mac_len)
+        SendARP(dest_ip, 0, mac_addr.as_mut_ptr() as *mut core::ffi::c_void, &mut mac_len)
     };
 
     if result == 0 && mac_len == 6 {
         // 成功获取 MAC 地址
-        let mac_bytes = mac_addr[0].to_le_bytes();
         let mac = format!(
             "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-            mac_bytes[0], mac_bytes[1], mac_bytes[2],
-            mac_bytes[3], mac_bytes[4], mac_bytes[5]
+            mac_addr[0], mac_addr[1], mac_addr[2],
+            mac_addr[3], mac_addr[4], mac_addr[5]
         );
         Some((target, mac))
     } else {

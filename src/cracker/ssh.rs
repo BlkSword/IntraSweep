@@ -26,8 +26,9 @@ impl Default for SshCracker {
 #[async_trait]
 impl Cracker for SshCracker {
     async fn crack(&self, config: &CrackConfig) -> CrackResult {
-        base::run_crack(config, CrackService::Ssh, "SSH", |_username, password, target, port, timeout| {
-            Self::try_connect_sync(&target, port, &_username, &password, timeout)
+        base::run_crack(config, CrackService::Ssh, "SSH", |username, password, target, port, timeout| {
+            let user = username.as_deref().unwrap_or("root");
+            Self::try_connect_sync(&target, port, user, &password, timeout)
         }).await
     }
 

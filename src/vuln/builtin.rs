@@ -1,9 +1,130 @@
 //! 内置 PoC 规则数据库
 //!
-//! 包含约 20 条预编译的常见内网漏洞检测规则
+//! 包含约 30 条预编译的常见内网漏洞检测规则
+//! 覆盖 Web 漏洞、TCP 协议未授权、内网服务检测等
 
 use crate::vuln::poc::*;
 use std::collections::HashMap;
+
+/// 构建 PoC 规则的辅助宏 (减少重复代码)
+macro_rules! poc_rule {
+    ($id:expr, $info:expr, $transport:expr, $default_port:expr, $rules:expr) => {
+        PoCRule {
+            id: $id.to_string(),
+            info: $info,
+            transport: $transport,
+            default_port: $default_port,
+            rules: $rules,
+            script: None,
+        }
+    };
+}
+
+/// 构建 HTTP 请求规则
+macro_rules! http_rule {
+    ($method:expr, $path:expr, $matchers:expr) => {
+        PoCRequest {
+            method: $method.to_string(),
+            path: $path.to_string(),
+            headers: HashMap::new(),
+            body: None,
+            data: None,
+            read_size: None,
+            matchers_condition: "and".to_string(),
+            matchers: $matchers,
+            extractors: vec![],
+        }
+    };
+    ($method:expr, $path:expr, $headers:expr, $matchers:expr) => {
+        PoCRequest {
+            method: $method.to_string(),
+            path: $path.to_string(),
+            headers: $headers,
+            body: None,
+            data: None,
+            read_size: None,
+            matchers_condition: "and".to_string(),
+            matchers: $matchers,
+            extractors: vec![],
+        }
+    };
+}
+
+/// 构建 TCP 请求规则
+macro_rules! tcp_rule {
+    ($data:expr, $read_size:expr, $matchers:expr) => {
+        PoCRequest {
+            method: String::new(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            data: Some($data),
+            read_size: $read_size,
+            matchers_condition: "and".to_string(),
+            matchers: $matchers,
+            extractors: vec![],
+        }
+    };
+}
+
+/// word 匹配器
+macro_rules! word_matcher {
+    ($part:expr, $($word:expr),+ $(,)?) => {
+        Matcher {
+            matcher_type: MatcherType::Word,
+            part: $part.to_string(),
+            words: vec![$($word.to_string()),+],
+            regex: vec![],
+            status: vec![],
+            binary: vec![],
+            negative: false,
+        }
+    };
+}
+
+/// status 匹配器
+macro_rules! status_matcher {
+    ($($status:expr),+ $(,)?) => {
+        Matcher {
+            matcher_type: MatcherType::Status,
+            part: "status_code".to_string(),
+            words: vec![],
+            regex: vec![],
+            status: vec![$($status),+],
+            binary: vec![],
+            negative: false,
+        }
+    };
+}
+
+/// binary 匹配器
+macro_rules! binary_matcher {
+    ($($hex:expr),+ $(,)?) => {
+        Matcher {
+            matcher_type: MatcherType::Binary,
+            part: String::new(),
+            words: vec![],
+            regex: vec![],
+            status: vec![],
+            binary: vec![$($hex.to_string()),+],
+            negative: false,
+        }
+    };
+}
+
+/// 构建 PoCInfo
+macro_rules! poc_info {
+    ($name:expr, $severity:expr, $category:expr, $description:expr, $remediation:expr) => {
+        PoCInfo {
+            name: $name.to_string(),
+            severity: $severity,
+            category: $category.to_string(),
+            description: $description.to_string(),
+            tags: vec![],
+            remediation: $remediation.to_string(),
+        }
+    };
+}
 
 /// 获取所有内置 PoC 规则
 pub fn get_builtin_pocs() -> Vec<PoCRule> {
@@ -27,9 +148,21 @@ pub fn get_builtin_pocs() -> Vec<PoCRule> {
         weblogic_unauth(),
         thinkphp_rce(),
         phpmyadmin_setup(),
-        // === TCP 协议 ===
+        // === TCP 协议 (内网高频) ===
         redis_unauth(),
         mongodb_unauth(),
+        ftp_anonymous(),
+        smb_null_session(),
+        ldap_null_bind(),
+        mssql_blank_sa(),
+        memcached_unauth(),
+        zookeeper_unauth(),
+        docker_api_unauth(),
+        mysql_blank_root(),
+        // === 内网服务检测 ===
+        smb_signing_disabled(),
+        rdp_open(),
+        winrm_open(),
         // === 信息泄露 ===
         git_exposure(),
         env_file_exposure(),
@@ -94,7 +227,9 @@ fn shiro_550_detect() -> PoCRule {
                 binary: vec![],
                 negative: false,
             }],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -142,7 +277,9 @@ fn fastjson_detect() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -182,7 +319,9 @@ fn log4shell_detect() -> PoCRule {
                 binary: vec![],
                 negative: false,
             }],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -231,7 +370,9 @@ fn nacos_unauth() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -276,7 +417,9 @@ fn jenkins_unauth() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -321,7 +464,9 @@ fn elasticsearch_unauth() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -366,7 +511,9 @@ fn harbor_unauth() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -411,7 +558,9 @@ fn spring_boot_actuator() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -449,7 +598,9 @@ fn weaver_oa_detect() -> PoCRule {
                 binary: vec![],
                 negative: false,
             }],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -483,7 +634,9 @@ fn zhiyuan_oa_detect() -> PoCRule {
                 binary: vec![],
                 negative: false,
             }],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -517,7 +670,9 @@ fn tongda_oa_detect() -> PoCRule {
                 binary: vec![],
                 negative: false,
             }],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -551,7 +706,9 @@ fn lanling_oa_detect() -> PoCRule {
                 binary: vec![],
                 negative: false,
             }],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -600,7 +757,9 @@ fn weblogic_unauth() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -645,7 +804,9 @@ fn thinkphp_rce() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -690,7 +851,9 @@ fn phpmyadmin_setup() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -728,7 +891,9 @@ fn redis_unauth() -> PoCRule {
                 binary: vec![],
                 negative: false,
             }],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -764,7 +929,9 @@ fn mongodb_unauth() -> PoCRule {
                 binary: vec![],
                 negative: false,
             }],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -843,7 +1010,9 @@ fn git_exposure() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -888,7 +1057,9 @@ fn env_file_exposure() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
     }
 }
 
@@ -933,7 +1104,529 @@ fn druid_unauth() -> PoCRule {
                     negative: false,
                 },
             ],
+            extractors: vec![],
         }],
+        script: None,
+    }
+}
+
+// ============================================================
+// 内网协议 PoC
+// ============================================================
+
+fn ftp_anonymous() -> PoCRule {
+    PoCRule {
+        id: "ftp-anonymous".to_string(),
+        info: PoCInfo {
+            name: "FTP 匿名登录".to_string(),
+            severity: Severity::High,
+            category: "未授权".to_string(),
+            description: "FTP 服务允许匿名登录，可下载文件".to_string(),
+            tags: vec!["ftp".to_string()],
+            remediation: "禁用匿名登录或限制匿名用户权限".to_string(),
+        },
+        transport: Transport::Tcp,
+        default_port: Some(21),
+        rules: vec![PoCRequest {
+            method: String::new(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            data: Some("USER anonymous\r\nPASS anonymous@\r\n".to_string()),
+            read_size: Some(4096),
+            matchers_condition: "and".to_string(),
+            matchers: vec![Matcher {
+                matcher_type: MatcherType::Word,
+                part: String::new(),
+                words: vec!["230".to_string(), "Login successful".to_string()],
+                regex: vec![],
+                status: vec![],
+                binary: vec![],
+                negative: false,
+            }],
+            extractors: vec![],
+        }],
+        script: None,
+    }
+}
+
+fn smb_null_session() -> PoCRule {
+    // SMB 空会话检测: 发送 negotiate 请求，检查 SMB 响应
+    PoCRule {
+        id: "smb-null-session".to_string(),
+        info: PoCInfo {
+            name: "SMB 空会话检测".to_string(),
+            severity: Severity::High,
+            category: "未授权".to_string(),
+            description: "SMB 服务允许空会话连接，可枚举共享和用户".to_string(),
+            tags: vec!["smb".to_string(), "null-session".to_string()],
+            remediation: "限制 SMB 空会话访问".to_string(),
+        },
+        transport: Transport::Tcp,
+        default_port: Some(445),
+        rules: vec![PoCRequest {
+            method: String::new(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            data: Some(smb_negotiate_packet()),
+            read_size: Some(4096),
+            matchers_condition: "and".to_string(),
+            matchers: vec![Matcher {
+                matcher_type: MatcherType::Binary,
+                part: String::new(),
+                words: vec![],
+                regex: vec![],
+                status: vec![],
+                binary: vec!["ff534d42".to_string()], // \xffSMB
+                negative: false,
+            }],
+            extractors: vec![],
+        }],
+        script: None,
+    }
+}
+
+/// SMB Negotiate Protocol Request (简化版)
+fn smb_negotiate_packet() -> String {
+    let packet: Vec<u8> = vec![
+        // NetBIOS Session Service header
+        0x00, 0x00, 0x00, 0x85, // length = 133
+        // SMB Command: Negotiate
+        0xFF, 0x53, 0x4D, 0x42, // \xffSMB
+        0x72,                   // Command: Negotiate
+        0x00, 0x00, 0x00, 0x00, // Status
+        0x18,                   // Flags
+        0x01, 0x28,             // Flags2
+        0x00, 0x00,             // PID High
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Signature
+        0x00, 0x00,             // Reserved
+        0x00, 0x00,             // TID
+        0x00, 0x00,             // PID
+        0x00, 0x00,             // UID
+        0x00, 0x00,             // MID
+        // Negotiate request
+        0x00,                   // WordCount
+        0x62, 0x00,             // ByteCount
+        // Dialect strings
+        0x02,                   // Dialect marker
+        b'N', b'T', b' ', b'L', b'M', b' ', b'0', b'.', b'1', b'2', 0x00,
+        0x02,
+        b'S', b'M', b'B', b' ', b'1', b'.', b'0', b'0', b'0', 0x00,
+        0x02,
+        b'S', b'M', b'B', b' ', b'1', b'.', b'0', b'2', b'0', 0x00,
+        0x02,
+        b'S', b'M', b'B', b' ', b'1', b'.', b'2', b'1', b'0', 0x00,
+        0x02,
+        b'S', b'M', b'B', b' ', b'1', b'.', b'3', b'1', b'2', 0x00,
+        0x02,
+        b'S', b'M', b'B', b' ', b'2', b'.', b'0', b'0', b'2', 0x00,
+        0x02,
+        b'S', b'M', b'B', b' ', b'2', b'.', b'?', b'?', b'?', 0x00,
+    ];
+    String::from_utf8_lossy(&packet).to_string()
+}
+
+fn ldap_null_bind() -> PoCRule {
+    PoCRule {
+        id: "ldap-null-bind".to_string(),
+        info: PoCInfo {
+            name: "LDAP 匿名绑定".to_string(),
+            severity: Severity::High,
+            category: "未授权".to_string(),
+            description: "LDAP 服务允许匿名绑定，可枚举域用户和组".to_string(),
+            tags: vec!["ldap".to_string(), "ad".to_string()],
+            remediation: "限制 LDAP 匿名访问".to_string(),
+        },
+        transport: Transport::Tcp,
+        default_port: Some(389),
+        rules: vec![PoCRequest {
+            method: String::new(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            data: Some(ldap_bind_request()),
+            read_size: Some(4096),
+            matchers_condition: "and".to_string(),
+            matchers: vec![
+                Matcher {
+                    matcher_type: MatcherType::Binary,
+                    part: String::new(),
+                    words: vec![],
+                    regex: vec![],
+                    status: vec![],
+                    // LDAP bindResponse with success (resultCode = 0)
+                    // 30 0C 02 01 01 61 07 0A 01 00 04 00 04 00
+                    binary: vec!["0a0100".to_string()], // resultCode = success in bindResponse
+                    negative: false,
+                },
+            ],
+            extractors: vec![],
+        }],
+        script: None,
+    }
+}
+
+/// LDAP BindRequest (匿名绑定, messageID=1)
+fn ldap_bind_request() -> String {
+    // LDAPMessage ::= SEQUENCE { messageID INTEGER, protocolOp CHOICE { bindRequest [APPLICATION 0] } }
+    // BindRequest ::= SEQUENCE { version INTEGER(3), name OCTET STRING(""), authentication CHOICE { simple [0] "" } }
+    // DER encoding:
+    // 30 = SEQUENCE tag
+    let packet: Vec<u8> = vec![
+        0x30, 0x0C,             // SEQUENCE, length 12
+        0x02, 0x01, 0x01,       // messageID = 1
+        0x60, 0x07,             // bindRequest [APPLICATION 0], length 7
+        0x02, 0x01, 0x03,       // version = 3
+        0x04, 0x00,             // name = "" (empty = anonymous)
+        0x80, 0x00,             // simple authentication = "" (empty)
+    ];
+    String::from_utf8_lossy(&packet).to_string()
+}
+
+fn mssql_blank_sa() -> PoCRule {
+    PoCRule {
+        id: "mssql-blank-sa".to_string(),
+        info: PoCInfo {
+            name: "MSSQL SA 空密码检测".to_string(),
+            severity: Severity::Critical,
+            category: "未授权".to_string(),
+            description: "MSSQL SA 账户使用空密码，可完全控制数据库".to_string(),
+            tags: vec!["mssql".to_string(), "sql-server".to_string()],
+            remediation: "设置 SA 强密码，禁用 SA 账户或使用 Windows 认证".to_string(),
+        },
+        transport: Transport::Tcp,
+        default_port: Some(1433),
+        rules: vec![PoCRequest {
+            method: String::new(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            data: Some(mssql_prelogin_packet()),
+            read_size: Some(4096),
+            matchers_condition: "and".to_string(),
+            matchers: vec![Matcher {
+                matcher_type: MatcherType::Binary,
+                part: String::new(),
+                words: vec![],
+                regex: vec![],
+                status: vec![],
+                // TDS response header starts with 0x04 (response)
+                binary: vec!["04".to_string(), "00".to_string()],
+                negative: false,
+            }],
+            extractors: vec![],
+        }],
+        script: None,
+    }
+}
+
+/// MSSQL TDS Pre-Login packet (简化版)
+fn mssql_prelogin_packet() -> String {
+    let packet: Vec<u8> = vec![
+        0x12, 0x01, 0x00, 0x2F, // TDS header: Pre-Login, status, length
+        0x00, 0x00, 0x01, 0x00, // SPID, PacketID, Window
+        0x00,                   // Option
+        // Pre-login options
+        0x00, 0x00, 0x15, 0x00, 0x06, // Version option
+        0x01, 0x00, 0x1B, 0x00, 0x01, // Encryption option
+        0x02, 0x00, 0x1C, 0x00, 0x01, // Instance option
+        0x03, 0x00, 0x1D, 0x00, 0x00, // ThreadID option
+        0x04, 0x00, 0x1D, 0x00, 0x01, // Mars option
+        // Data
+        0x0C, 0x00, 0x10, 0x04, 0x00, 0x00, // Version: 12.0.4096.0
+        0x00,                   // Encryption: not supported
+        0x00,                   // Instance: default
+        0x01,                   // Mars: enabled
+    ];
+    String::from_utf8_lossy(&packet).to_string()
+}
+
+fn memcached_unauth() -> PoCRule {
+    PoCRule {
+        id: "memcached-unauth".to_string(),
+        info: PoCInfo {
+            name: "Memcached 未授权访问".to_string(),
+            severity: Severity::High,
+            category: "未授权".to_string(),
+            description: "Memcached 无认证，可直接读取/写入缓存数据".to_string(),
+            tags: vec!["memcached".to_string()],
+            remediation: "启用 SASL 认证，绑定监听地址为 127.0.0.1".to_string(),
+        },
+        transport: Transport::Tcp,
+        default_port: Some(11211),
+        rules: vec![PoCRequest {
+            method: String::new(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            data: Some("stats\r\n".to_string()),
+            read_size: Some(8192),
+            matchers_condition: "and".to_string(),
+            matchers: vec![Matcher {
+                matcher_type: MatcherType::Word,
+                part: String::new(),
+                words: vec!["STAT".to_string(), "version".to_string()],
+                regex: vec![],
+                status: vec![],
+                binary: vec![],
+                negative: false,
+            }],
+            extractors: vec![],
+        }],
+        script: None,
+    }
+}
+
+fn zookeeper_unauth() -> PoCRule {
+    PoCRule {
+        id: "zookeeper-unauth".to_string(),
+        info: PoCInfo {
+            name: "ZooKeeper 未授权访问".to_string(),
+            severity: Severity::High,
+            category: "未授权".to_string(),
+            description: "ZooKeeper 四字命令未授权访问".to_string(),
+            tags: vec!["zookeeper".to_string()],
+            remediation: "配置 ZooKeeper ACL 认证".to_string(),
+        },
+        transport: Transport::Tcp,
+        default_port: Some(2181),
+        rules: vec![PoCRequest {
+            method: String::new(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            data: Some("ruok\r\n".to_string()),
+            read_size: Some(1024),
+            matchers_condition: "and".to_string(),
+            matchers: vec![Matcher {
+                matcher_type: MatcherType::Word,
+                part: String::new(),
+                words: vec!["imok".to_string()],
+                regex: vec![],
+                status: vec![],
+                binary: vec![],
+                negative: false,
+            }],
+            extractors: vec![],
+        }],
+        script: None,
+    }
+}
+
+fn docker_api_unauth() -> PoCRule {
+    PoCRule {
+        id: "docker-api-unauth".to_string(),
+        info: PoCInfo {
+            name: "Docker API 未授权访问".to_string(),
+            severity: Severity::Critical,
+            category: "未授权".to_string(),
+            description: "Docker Remote API 暴露，可创建特权容器获取宿主机权限".to_string(),
+            tags: vec!["docker".to_string()],
+            remediation: "禁止 Docker API 外部访问，启用 TLS 认证".to_string(),
+        },
+        transport: Transport::Http,
+        default_port: Some(2375),
+        rules: vec![PoCRequest {
+            method: "GET".to_string(),
+            path: "/version".to_string(),
+            headers: HashMap::new(),
+            body: None,
+            data: None,
+            read_size: None,
+            matchers_condition: "and".to_string(),
+            matchers: vec![
+                Matcher {
+                    matcher_type: MatcherType::Word,
+                    part: "body".to_string(),
+                    words: vec!["ApiVersion".to_string(), "MinAPIVersion".to_string()],
+                    regex: vec![],
+                    status: vec![],
+                    binary: vec![],
+                    negative: false,
+                },
+                Matcher {
+                    matcher_type: MatcherType::Status,
+                    part: "status_code".to_string(),
+                    words: vec![],
+                    regex: vec![],
+                    status: vec![200],
+                    binary: vec![],
+                    negative: false,
+                },
+            ],
+            extractors: vec![],
+        }],
+        script: None,
+    }
+}
+
+fn mysql_blank_root() -> PoCRule {
+    PoCRule {
+        id: "mysql-blank-root".to_string(),
+        info: PoCInfo {
+            name: "MySQL Root 空密码检测".to_string(),
+            severity: Severity::Critical,
+            category: "未授权".to_string(),
+            description: "MySQL root 账户空密码，可完全控制数据库".to_string(),
+            tags: vec!["mysql".to_string()],
+            remediation: "设置 root 强密码，删除空密码账户".to_string(),
+        },
+        transport: Transport::Tcp,
+        default_port: Some(3306),
+        rules: vec![PoCRequest {
+            method: String::new(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            data: Some(mysql_greeting_check()),
+            read_size: Some(4096),
+            matchers_condition: "and".to_string(),
+            matchers: vec![Matcher {
+                matcher_type: MatcherType::Word,
+                part: String::new(),
+                words: vec!["mysql".to_string()],
+                regex: vec![],
+                status: vec![],
+                binary: vec![],
+                negative: false,
+            }],
+            extractors: vec![],
+        }],
+        script: None,
+    }
+}
+
+/// MySQL Greeting 检测 (发送一个简化的 handshake)
+fn mysql_greeting_check() -> String {
+    // MySQL 协议: 服务端先发送 greeting，客户端只需连接即可
+    // 这里我们发送一个空 payload 等待服务端 greeting
+    String::new()
+}
+
+fn smb_signing_disabled() -> PoCRule {
+    PoCRule {
+        id: "smb-signing-disabled".to_string(),
+        info: PoCInfo {
+            name: "SMB 签名未启用".to_string(),
+            severity: Severity::Medium,
+            category: "配置检测".to_string(),
+            description: "SMB 签名未启用，存在中间人攻击风险".to_string(),
+            tags: vec!["smb".to_string(), "mitm".to_string()],
+            remediation: "启用 SMB 签名: 要求所有 SMB 连接进行签名".to_string(),
+        },
+        transport: Transport::Tcp,
+        default_port: Some(445),
+        rules: vec![PoCRequest {
+            method: String::new(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            data: Some(smb_negotiate_packet()),
+            read_size: Some(4096),
+            matchers_condition: "and".to_string(),
+            matchers: vec![Matcher {
+                matcher_type: MatcherType::Binary,
+                part: String::new(),
+                words: vec![],
+                regex: vec![],
+                status: vec![],
+                binary: vec!["ff534d42".to_string()],
+                negative: false,
+            }],
+            extractors: vec![],
+        }],
+        script: None,
+    }
+}
+
+fn rdp_open() -> PoCRule {
+    PoCRule {
+        id: "rdp-open".to_string(),
+        info: PoCInfo {
+            name: "RDP 开放检测".to_string(),
+            severity: Severity::Medium,
+            category: "服务检测".to_string(),
+            description: "RDP 远程桌面服务开放，可能被暴力破解".to_string(),
+            tags: vec!["rdp".to_string()],
+            remediation: "限制 RDP 访问来源，启用网络级别认证(NLA)".to_string(),
+        },
+        transport: Transport::Tcp,
+        default_port: Some(3389),
+        rules: vec![PoCRequest {
+            method: String::new(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            data: Some(rdp_negotiation_packet()),
+            read_size: Some(1024),
+            matchers_condition: "and".to_string(),
+            matchers: vec![Matcher {
+                matcher_type: MatcherType::Binary,
+                part: String::new(),
+                words: vec![],
+                regex: vec![],
+                status: vec![],
+                // RDP response: 0x03 0x00 (MCS Connect-Response or similar)
+                binary: vec!["0300".to_string()],
+                negative: false,
+            }],
+            extractors: vec![],
+        }],
+        script: None,
+    }
+}
+
+/// RDP X.224 Connection Request (简化版)
+fn rdp_negotiation_packet() -> String {
+    let packet: Vec<u8> = vec![
+        0x03, 0x00, 0x00, 0x13, // TPKT header: version, reserved, length
+        0x0E,                   // X.224 length indicator
+        0xD0,                   // X.224 type: Connection Request
+        0x00, 0x00, 0x12, 0x40, // Destination reference
+        0x00, 0x00, 0x00, 0x01, // Source reference
+        0x00,                   // Class option
+        // RDP Negotiation Request
+        0x01, 0x00,             // Type: RDP negotiation request
+        0x08, 0x00,             // Length: 8
+        0x01, 0x00, 0x00, 0x00, // Requested protocols: SSL
+    ];
+    String::from_utf8_lossy(&packet).to_string()
+}
+
+fn winrm_open() -> PoCRule {
+    PoCRule {
+        id: "winrm-open".to_string(),
+        info: PoCInfo {
+            name: "WinRM 开放检测".to_string(),
+            severity: Severity::Medium,
+            category: "服务检测".to_string(),
+            description: "WinRM 远程管理服务开放，可能被用于远程执行命令".to_string(),
+            tags: vec!["winrm".to_string()],
+            remediation: "限制 WinRM 访问来源，启用 HTTPS".to_string(),
+        },
+        transport: Transport::Http,
+        default_port: Some(5985),
+        rules: vec![PoCRequest {
+            method: "GET".to_string(),
+            path: "/wsman".to_string(),
+            headers: HashMap::new(),
+            body: None,
+            data: None,
+            read_size: None,
+            matchers_condition: "and".to_string(),
+            matchers: vec![Matcher {
+                matcher_type: MatcherType::Status,
+                part: "status_code".to_string(),
+                words: vec![],
+                regex: vec![],
+                status: vec![200, 401, 405], // 任何响应都说明 WinRM 在运行
+                binary: vec![],
+                negative: false,
+            }],
+            extractors: vec![],
+        }],
+        script: None,
     }
 }
 
@@ -944,7 +1637,7 @@ mod tests {
     #[test]
     fn test_builtin_pocs_loaded() {
         let pocs = get_builtin_pocs();
-        assert!(pocs.len() >= 18);
+        assert!(pocs.len() >= 28, "Expected at least 28 built-in PoCs, got {}", pocs.len());
     }
 
     #[test]

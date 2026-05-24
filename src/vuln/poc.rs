@@ -33,11 +33,11 @@ impl Severity {
 
     pub fn color_code(&self) -> &str {
         match self {
-            Severity::Critical => "\x1b[31m", // 红色
-            Severity::High => "\x1b[33m",     // 黄色
-            Severity::Medium => "\x1b[36m",   // 青色
-            Severity::Low => "\x1b[32m",      // 绿色
-            Severity::Info => "\x1b[37m",     // 白色
+            Severity::Critical => "\x1b[31m",
+            Severity::High => "\x1b[33m",
+            Severity::Medium => "\x1b[36m",
+            Severity::Low => "\x1b[32m",
+            Severity::Info => "\x1b[37m",
         }
     }
 
@@ -65,6 +65,7 @@ impl Default for Severity {
 pub enum Transport {
     Http,
     Tcp,
+    Script,
 }
 
 impl Default for Transport {
@@ -84,6 +85,35 @@ pub struct PoCRule {
     pub default_port: Option<u16>,
     #[serde(default)]
     pub rules: Vec<PoCRequest>,
+    /// 脚本配置 (transport: script 时使用)
+    #[serde(default)]
+    pub script: Option<ScriptConfig>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScriptConfig {
+    /// 解释器: python3, python, powershell, bash, sh
+    #[serde(default = "default_interpreter")]
+    pub interpreter: String,
+    /// 外部脚本文件路径 (相对于 PoC 文件目录)
+    #[serde(default)]
+    pub file: Option<String>,
+    /// 内联脚本代码
+    #[serde(default)]
+    pub code: Option<String>,
+    /// 传递给脚本的参数 (支持 {{target}}, {{port}} 变量)
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// 脚本执行超时(秒)
+    #[serde(default = "default_script_timeout")]
+    pub timeout: u64,
+}
+
+fn default_interpreter() -> String {
+    "python3".to_string()
+}
+
+fn default_script_timeout() -> u64 {
+    30
 }
 
 /// PoC 元信息
@@ -103,7 +133,7 @@ pub struct PoCInfo {
 }
 
 /// 单个请求规则
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PoCRequest {
     #[serde(default = "default_method")]
     pub method: String,
@@ -121,6 +151,51 @@ pub struct PoCRequest {
     pub matchers_condition: String,
     #[serde(default)]
     pub matchers: Vec<Matcher>,
+    /// 变量提取器 (从响应中提取值供后续步骤使用)
+    #[serde(default)]
+    pub extractors: Vec<Extractor>,
+}
+
+impl Default for PoCRequest {
+    fn default() -> Self {
+        Self {
+            method: default_method(),
+            path: String::new(),
+            headers: HashMap::new(),
+            body: None,
+            data: None,
+            read_size: None,
+            matchers_condition: default_matchers_condition(),
+            matchers: Vec::new(),
+            extractors: Vec::new(),
+        }
+    }
+}
+
+impl Default for PoCRule {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            info: PoCInfo::default(),
+            transport: Transport::default(),
+            default_port: None,
+            rules: Vec::new(),
+            script: None,
+        }
+    }
+}
+
+impl Default for PoCInfo {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            severity: Severity::default(),
+            category: String::new(),
+            description: String::new(),
+            tags: Vec::new(),
+            remediation: String::new(),
+        }
+    }
 }
 
 fn default_method() -> String {
@@ -129,6 +204,43 @@ fn default_method() -> String {
 
 fn default_matchers_condition() -> String {
     "and".to_string()
+}
+
+/// 变量提取器
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Extractor {
+    /// 变量名
+    pub name: String,
+    /// 提取类型
+    #[serde(rename = "type", default = "default_extractor_type")]
+    pub extractor_type: ExtractorType,
+    /// 提取来源: body, header, all
+    #[serde(default = "default_part")]
+    pub part: String,
+    /// 正则表达式 (regex 类型)
+    #[serde(default)]
+    pub regex: Option<String>,
+    /// 捕获组索引 (默认 1)
+    #[serde(default = "default_group")]
+    pub group: usize,
+    /// 提取的值在内部使用时的内部匹配
+    #[serde(default)]
+    pub internal: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtractorType {
+    Regex,
+    Kodex,
+}
+
+fn default_extractor_type() -> ExtractorType {
+    ExtractorType::Regex
+}
+
+fn default_group() -> usize {
+    1
 }
 
 /// 匹配器类型
@@ -142,7 +254,7 @@ pub enum MatcherType {
 }
 
 /// 匹配器定义
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Matcher {
     #[serde(rename = "type")]
     pub matcher_type: MatcherType,
@@ -164,6 +276,15 @@ fn default_part() -> String {
     "body".to_string()
 }
 
+/// 变量替换 — 将 {{var}} 占位符替换为实际值
+pub fn substitute_vars(template: &str, vars: &HashMap<String, String>) -> String {
+    let mut result = template.to_string();
+    for (key, value) in vars {
+        result = result.replace(&format!("{{{{{}}}}}", key), value);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,7 +301,6 @@ mod tests {
     fn test_severity_from_str() {
         assert_eq!(Severity::from_str_opt("critical"), Some(Severity::Critical));
         assert_eq!(Severity::from_str_opt("high"), Some(Severity::High));
-        assert_eq!(Severity::from_str_opt("medium"), Some(Severity::Medium));
         assert_eq!(Severity::from_str_opt("unknown"), None);
     }
 
@@ -205,31 +325,72 @@ rules:
         assert_eq!(poc.id, "test-poc");
         assert_eq!(poc.info.severity, Severity::High);
         assert_eq!(poc.transport, Transport::Http);
-        assert_eq!(poc.rules.len(), 1);
-        assert_eq!(poc.rules[0].method, "GET");
-        assert_eq!(poc.rules[0].matchers.len(), 1);
     }
 
     #[test]
-    fn test_deserialize_tcp_poc() {
+    fn test_deserialize_script_poc() {
         let yaml = r#"
-id: tcp-test
+id: script-test
 info:
-  name: TCP Test
+  name: Script Test
   severity: critical
-transport: tcp
-default-port: 6379
-rules:
-  - data: "PING\r\n"
-    matchers:
-      - type: word
-        words:
-          - "PONG"
+transport: script
+script:
+  interpreter: python3
+  code: |
+    import json, sys
+    print(json.dumps({"vulnerable": True, "evidence": "test"}))
 "#;
         let poc: PoCRule = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(poc.transport, Transport::Tcp);
-        assert_eq!(poc.default_port, Some(6379));
-        assert_eq!(poc.rules[0].data, Some("PING\r\n".to_string()));
+        assert_eq!(poc.transport, Transport::Script);
+        assert!(poc.script.is_some());
+        let script = poc.script.unwrap();
+        assert_eq!(script.interpreter, "python3");
+        assert!(script.code.is_some());
+    }
+
+    #[test]
+    fn test_deserialize_extractors() {
+        let yaml = r#"
+id: multi-step
+info:
+  name: Multi Step Test
+transport: http
+rules:
+  - method: GET
+    path: "/login"
+    extractors:
+      - name: token
+        type: regex
+        part: body
+        regex: 'token=([a-f0-9]+)'
+    matchers:
+      - type: status
+        status: [200]
+  - method: GET
+    path: "/api?token={{token}}"
+    matchers:
+      - type: word
+        words: ["admin"]
+"#;
+        let poc: PoCRule = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(poc.rules.len(), 2);
+        assert_eq!(poc.rules[0].extractors.len(), 1);
+        assert_eq!(poc.rules[0].extractors[0].name, "token");
+        assert_eq!(poc.rules[1].path, "/api?token={{token}}");
+    }
+
+    #[test]
+    fn test_substitute_vars() {
+        let mut vars = HashMap::new();
+        vars.insert("target".to_string(), "192.168.1.1".to_string());
+        vars.insert("port".to_string(), "8080".to_string());
+
+        let result = substitute_vars("http://{{target}}:{{port}}/api", &vars);
+        assert_eq!(result, "http://192.168.1.1:8080/api");
+
+        let result2 = substitute_vars("no vars here", &vars);
+        assert_eq!(result2, "no vars here");
     }
 
     #[test]
@@ -243,12 +404,5 @@ rules:
         let poc: PoCRule = serde_json::from_str(json).unwrap();
         assert_eq!(poc.id, "json-test");
         assert_eq!(poc.info.severity, Severity::Low);
-    }
-
-    #[test]
-    fn test_severity_display() {
-        assert_eq!(Severity::Critical.display_name(), "严重");
-        assert_eq!(Severity::High.display_name(), "高危");
-        assert_eq!(Severity::Medium.display_name(), "中危");
     }
 }

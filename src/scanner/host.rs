@@ -37,7 +37,7 @@ impl HostScanner {
                 #[cfg(windows)]
                 {
                     let arp_scanner = crate::scanner::arp::ArpScanner::new(self.config.clone());
-                    let arp_results = arp_scanner.scan(targets).await;
+                    let arp_results = arp_scanner.scan(targets.clone()).await;
                     if !arp_results.is_empty() {
                         return arp_results;
                     }

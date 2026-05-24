@@ -5,7 +5,6 @@
 
 use hmac::{Hmac, Mac};
 use md5::Md5;
-use digest::Digest;
 
 type HmacMd5 = Hmac<Md5>;
 
@@ -389,35 +388,35 @@ pub fn decode_ts_request(data: &[u8]) -> Result<Vec<u8>, String> {
         if data[pos] == 0xA1 {
             // 找到 negoTokens
             let (_, content_start) = der_read_length(&data[pos + 1..])?;
-            let nego_tokens_data = &data[pos + 1 + content_start.0..];
+            let nego_tokens_data = &data[pos + 1 + content_start.consumed..];
 
             // 跳过外层 SEQUENCE
             if nego_tokens_data.is_empty() || nego_tokens_data[0] != 0x30 {
                 return Err("期望 SEQUENCE".to_string());
             }
             let (_, seq_start) = der_read_length(&nego_tokens_data[1..])?;
-            let seq_data = &nego_tokens_data[1 + seq_start.0..];
+            let seq_data = &nego_tokens_data[1 + seq_start.consumed..];
 
             // 跳过内层 SEQUENCE
             if seq_data.is_empty() || seq_data[0] != 0x30 {
                 return Err("期望内层 SEQUENCE".to_string());
             }
             let (_, inner_start) = der_read_length(&seq_data[1..])?;
-            let inner_data = &seq_data[1 + inner_start.0..];
+            let inner_data = &seq_data[1 + inner_start.consumed..];
 
             // 跳过 [0] 标签
             if inner_data.is_empty() || inner_data[0] != 0xA0 {
                 return Err("期望 [0] OCTET STRING 标签".to_string());
             }
             let (_, a0_start) = der_read_length(&inner_data[1..])?;
-            let octet_data = &inner_data[1 + a0_start.0..];
+            let octet_data = &inner_data[1 + a0_start.consumed..];
 
             // 读取 OCTET STRING
             if octet_data.is_empty() || octet_data[0] != 0x04 {
                 return Err("期望 OCTET STRING".to_string());
             }
             let (len_info, str_start) = der_read_length(&octet_data[1..])?;
-            return Ok(octet_data[1 + str_start.0..1 + str_start.0 + len_info.1].to_vec());
+            return Ok(octet_data[1 + str_start.consumed..1 + str_start.consumed + len_info.value].to_vec());
         }
         pos += 1;
     }

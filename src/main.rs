@@ -1,10 +1,12 @@
 //! IntraSweep - 内网渗透辅助工具
 
+mod ad;
 mod collector;
 mod core;
 mod cracker;
 mod modules;
 mod output;
+mod privesc;
 mod scanner;
 mod tunnel;
 mod vuln;
@@ -276,6 +278,62 @@ enum Commands {
         #[arg(short, long, default_value = "10")]
         timeout: u64,
     },
+
+    /// AD 域深度枚举 (缩写: ad)
+    #[clap(about = "AD 域深度枚举 (缩写: ad)")]
+    Ad {
+        /// 域控 IP 地址
+        #[arg(short, long)]
+        dc: String,
+
+        /// 域名 (例: corp.local)
+        #[arg(short, long)]
+        domain: String,
+
+        /// 用户名
+        #[arg(short, long)]
+        username: Option<String>,
+
+        /// 密码
+        #[arg(short, long)]
+        password: Option<String>,
+
+        /// 使用 LDAPS (端口 636)
+        #[arg(long)]
+        ssl: bool,
+
+        /// 执行模式: all, kerberoast, asrep-roast, bloodhound
+        #[arg(short, long, default_value = "all")]
+        mode: String,
+
+        /// BloodHound 输出目录 (mode=bloodhound 时使用)
+        #[arg(long)]
+        bloodhound_dir: Option<PathBuf>,
+
+        /// 输出格式: json, csv (默认: json)
+        #[arg(long, default_value = "json")]
+        format: String,
+
+        /// 输出文件路径
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
+    /// 提权检测功能 (缩写: p)
+    #[clap(about = "提权检测功能 (缩写: p)")]
+    Privesc {
+        /// 检查类别: all, service, credentials, registry, tokens, files, patches, suid, capabilities, cron, sudo, docker, ssh, kernel
+        #[arg(short, long)]
+        check: Option<String>,
+
+        /// 输出格式: json, csv (默认: json)
+        #[arg(long, default_value = "json")]
+        format: String,
+
+        /// 输出文件路径
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 // ============================================================
@@ -527,6 +585,24 @@ fn main() {
             } else {
                 run_vuln_scan(targets.unwrap(), poc_file, severity, category, output_fmt, output, concurrency, timeout)
             }
+        }
+
+        Commands::Ad {
+            dc, domain, username, password, ssl, mode, bloodhound_dir, format, output,
+        } => {
+            let output_fmt = output::format::OutputFormat::from_str(&format)
+                .unwrap_or(output::format::OutputFormat::Json);
+            run_ad_enum(dc, domain, username, password, ssl, mode, bloodhound_dir, output_fmt, output)
+        }
+
+        Commands::Privesc {
+            check,
+            format,
+            output,
+        } => {
+            let output_fmt = output::format::OutputFormat::from_str(&format)
+                .unwrap_or(output::format::OutputFormat::Json);
+            run_privesc(check, output_fmt, output)
         }
     };
 
@@ -3199,4 +3275,263 @@ fn export_vuln_csv(result: &vuln::VulnScanResult, path: &std::path::Path) -> Res
 
     wtr.flush()?;
     Ok(())
+}
+
+// ============================================================
+// 提权检测功能
+// ============================================================
+
+/// 运行 AD 域深度枚举
+fn run_ad_enum(
+    dc: String,
+    domain: String,
+    username: Option<String>,
+    password: Option<String>,
+    ssl: bool,
+    mode: String,
+    bloodhound_dir: Option<PathBuf>,
+    output_fmt: output::format::OutputFormat,
+    output: Option<PathBuf>,
+) -> Result<()> {
+    let ad_label = "AD域枚举";
+    print_info(&format!("开始{}...", ad_label));
+
+    let mut config = ad::ldap::LdapConfig::new(&dc, &domain).use_ssl(ssl);
+    if let (Some(user), Some(pass)) = (&username, &password) {
+        config = config.with_credentials(user, pass);
+    }
+
+    let rt = tokio::runtime::Runtime::new()?;
+    let ad_err = |e: String| -> FlyWheelError { FlyWheelError::Other { message: e } };
+
+    let result = match mode.as_str() {
+        "kerberoast" => {
+            let enumerator = ad::ldap::AdEnumerator::new(config);
+            let targets = rt.block_on(enumerator.kerberoast()).map_err(ad_err)?;
+            print_kerberoast_results(&targets);
+            save_ad_result(&output_fmt, &output, &serde_json::to_value(&targets)?)?;
+            return Ok(());
+        }
+        "asrep-roast" => {
+            let enumerator = ad::ldap::AdEnumerator::new(config);
+            let targets = rt.block_on(enumerator.asrep_roast()).map_err(ad_err)?;
+            print_asrep_results(&targets);
+            save_ad_result(&output_fmt, &output, &serde_json::to_value(&targets)?)?;
+            return Ok(());
+        }
+        "bloodhound" => {
+            let enumerator = ad::ldap::AdEnumerator::new(config);
+            let result = rt.block_on(enumerator.enumerate_all()).map_err(ad_err)?;
+            let bh_dir = bloodhound_dir.unwrap_or_else(|| std::path::PathBuf::from("bloodhound_output"));
+            ad::bloodhound::export_bloodhound(&result, &bh_dir)?;
+            print_success(&format!("BloodHound 数据已导出到: {}", bh_dir.display()));
+            return Ok(());
+        }
+        _ => {
+            let enumerator = ad::ldap::AdEnumerator::new(config);
+            let result = rt.block_on(enumerator.enumerate_all()).map_err(ad_err)?;
+            print_ad_enum_results(&result);
+            result
+        }
+    };
+
+    save_ad_result(&output_fmt, &output, &serde_json::to_value(&result)?)?;
+    Ok(())
+}
+
+fn save_ad_result(
+    fmt: &output::format::OutputFormat,
+    output: &Option<PathBuf>,
+    data: &serde_json::Value,
+) -> Result<()> {
+    if let Some(path) = output {
+        let content = match fmt {
+            output::format::OutputFormat::Json => serde_json::to_string_pretty(data)?,
+            output::format::OutputFormat::Csv => {
+                serde_json::to_string_pretty(data)?
+            }
+        };
+        std::fs::write(path, content)?;
+        print_success(&format!("结果已保存到: {}", path.display()));
+    }
+    Ok(())
+}
+
+fn print_ad_enum_results(result: &ad::AdEnumResult) {
+    println!("\n{}", "═".repeat(70));
+    println!("║  AD 域枚举结果");
+    println!("║  域名: {:<58}║", result.domain_name);
+    if let Some(ref dc) = result.domain_controller {
+        println!("║  域控: {:<58}║", dc);
+    }
+    println!("║  耗时: {:.2}s{:<51}║", result.duration_secs, "");
+    println!("╠{}", "═".repeat(69));
+
+    // 统计
+    println!("║  用户: {}  组: {}  计算机: {}", result.users.len(), result.groups.len(), result.computers.len());
+    println!("║  Kerberoast目标: {}  AS-REP目标: {}", result.kerberoast_targets.len(), result.asrep_targets.len());
+    println!("║  信任关系: {}  GPO: {}", result.trusts.len(), result.gpos.len());
+
+    // 管理员账户
+    let admin_count = result.users.iter().filter(|u| u.admin_count).count();
+    let da_count = result.users.iter().filter(|u| u.member_of.iter().any(|m| m.contains("Domain Admins"))).count();
+    println!("║  管理员账户: {}  Domain Admins: {}", admin_count, da_count);
+
+    println!("╠{}", "═".repeat(69));
+
+    // Kerberoast 目标
+    if !result.kerberoast_targets.is_empty() {
+        println!("║  Kerberoast 目标:");
+        for t in result.kerberoast_targets.iter().take(10) {
+            let status = if t.enabled { "启用" } else { "禁用" };
+            println!("║    {} ({}) SPN: {} [{}]", t.username, status, t.spn, t.service_type);
+        }
+        if result.kerberoast_targets.len() > 10 {
+            println!("║    ... 还有 {} 个目标", result.kerberoast_targets.len() - 10);
+        }
+    }
+
+    // AS-REP 目标
+    if !result.asrep_targets.is_empty() {
+        println!("║  AS-REP Roast 目标:");
+        for t in &result.asrep_targets {
+            let status = if t.enabled { "启用" } else { "禁用" };
+            println!("║    {} ({})", t.username, status);
+        }
+    }
+
+    println!("{}{}\n", "╚", "═".repeat(69));
+}
+
+fn print_kerberoast_results(targets: &[ad::KerberoastTarget]) {
+    println!("\n{}", "═".repeat(70));
+    println!("║  Kerberoast 目标 (共 {} 个)", targets.len());
+    println!("╠{}", "═".repeat(69));
+    for t in targets.iter().take(20) {
+        let status = if t.enabled { "启用" } else { "禁用" };
+        let admin = if t.admin_count { " [管理员]" } else { "" };
+        println!("║  {} | {} | {} ({}){}", t.username, t.spn, t.service_type, status, admin);
+    }
+    if targets.len() > 20 {
+        println!("║  ... 还有 {} 个目标", targets.len() - 20);
+    }
+    println!("{}{}\n", "╚", "═".repeat(69));
+}
+
+fn print_asrep_results(targets: &[ad::AsrepTarget]) {
+    println!("\n{}", "═".repeat(70));
+    println!("║  AS-REP Roast 目标 (共 {} 个)", targets.len());
+    println!("╠{}", "═".repeat(69));
+    for t in targets {
+        let status = if t.enabled { "启用" } else { "禁用" };
+        println!("║  {} ({})", t.username, status);
+    }
+    println!("{}{}\n", "╚", "═".repeat(69));
+}
+
+/// 运行提权检测
+fn run_privesc(
+    check: Option<String>,
+    output_fmt: output::format::OutputFormat,
+    output: Option<PathBuf>,
+) -> Result<()> {
+    print_banner();
+    println!();
+
+    let privesc_label = core::obfstr::sensitive::privesc_label();
+    print_info(&format!("开始{}...", privesc_label));
+    println!();
+
+    let categories = privesc::available_categories();
+    println!("可用检查类别: {}", categories.join(", "));
+    println!();
+
+    // 执行检查
+    let result = if let Some(ref category) = check {
+        if category == "all" {
+            privesc::run_all_checks()
+        } else {
+            let findings = privesc::run_check(category);
+            privesc::PrivescResult {
+                hostname: whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string()),
+                os: std::env::consts::OS.to_string(),
+                current_user: whoami::username(),
+                is_admin: false,
+                findings,
+                stats: Default::default(),
+            }
+        }
+    } else {
+        privesc::run_all_checks()
+    };
+
+    // 打印结果
+    print_privesc_results(&result);
+
+    // 保存结果
+    let path = output.unwrap_or_else(|| {
+        PathBuf::from(output::format::generate_output_filename(
+            &result.hostname,
+            output_fmt,
+        ))
+    });
+
+    let json = serde_json::to_string_pretty(&result)?;
+    std::fs::write(&path, json)?;
+    print_success(&format!("结果已保存: {}", path.display()));
+
+    Ok(())
+}
+
+/// 打印提权检测结果
+fn print_privesc_results(result: &privesc::PrivescResult) {
+    println!();
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("  {} 结果", core::obfstr::sensitive::privesc_label());
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!();
+    println!("  主机名: {}", result.hostname);
+    println!("  系统: {}", result.os);
+    println!("  当前用户: {} {}", result.current_user, if result.is_admin { "[管理员]" } else { "" });
+    println!();
+
+    if result.findings.is_empty() {
+        print_success("未发现提权风险");
+        return;
+    }
+
+    // 统计
+    let stats = &result.stats;
+    println!("  发现风险: {}", stats.total_checks);
+    if stats.critical_count > 0 {
+        println!("  {}{}严重: {}{}", "\x1b[31m", "■", stats.critical_count, "\x1b[0m");
+    }
+    if stats.high_count > 0 {
+        println!("  {}{}高危: {}{}", "\x1b[33m", "■", stats.high_count, "\x1b[0m");
+    }
+    if stats.medium_count > 0 {
+        println!("  {}{}中危: {}{}", "\x1b[36m", "■", stats.medium_count, "\x1b[0m");
+    }
+    println!();
+
+    // 详细发现
+    for finding in &result.findings {
+        println!("  {}[{}] {} [{}]{}",
+            finding.severity.color_code(),
+            finding.severity.display_name(),
+            finding.title,
+            finding.category,
+            "\x1b[0m");
+        if !finding.description.is_empty() {
+            println!("    {}", finding.description);
+        }
+        if !finding.detail.is_empty() {
+            let detail: String = finding.detail.chars().take(200).collect();
+            println!("    详情: {}", detail.replace('\n', " "));
+        }
+        if !finding.remediation.is_empty() {
+            println!("    修复: {}", finding.remediation);
+        }
+        println!();
+    }
 }

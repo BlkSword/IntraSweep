@@ -58,7 +58,7 @@ impl RdpCracker {
         };
 
         // 2. X.224 连接请求
-        let mut stream = match Self::x224_negotiate(stream) {
+        let stream = match Self::x224_negotiate(stream) {
             Ok(s) => s,
             Err(_) => return false,
         };
@@ -150,7 +150,6 @@ impl RdpCracker {
         let connector = native_tls::TlsConnector::builder()
             .danger_accept_invalid_certs(true)
             .danger_accept_invalid_hostnames(true)
-            .use_server_name_indication(false)
             .build()
             .map_err(|e| format!("创建 TLS 连接器失败: {}", e))?;
 

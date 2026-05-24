@@ -35,27 +35,19 @@ impl Cracker for RedisCracker {
 }
 
 impl RedisCracker {
-    fn try_connect_sync(target: &str, port: u16, password: &str, timeout: Duration) -> bool {
+    fn try_connect_sync(target: &str, port: u16, password: &str, _timeout: Duration) -> bool {
         let connection_string = if password.is_empty() || password == "nil" {
             format!("redis://{}:{}", target, port)
         } else {
             format!("redis://:{}@{}:{}", password, target, port)
         };
 
-        match tokio::time::timeout(
-            timeout,
-            tokio::task::spawn_blocking(move || {
-                let client = redis::Client::open(connection_string);
-                if let Ok(client) = client {
-                    if let Ok(_conn) = client.get_connection() {
-                        return true;
-                    }
-                }
-                false
-            })
-        ).await {
-            Ok(Ok(true)) => true,
-            _ => false,
+        let client = redis::Client::open(connection_string);
+        if let Ok(client) = client {
+            if let Ok(_conn) = client.get_connection() {
+                return true;
+            }
         }
+        false
     }
 }
