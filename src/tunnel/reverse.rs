@@ -5,6 +5,7 @@
 use crate::core::error::{FlyWheelError, Result};
 use crate::tunnel::config::TunnelConfig;
 use crate::tunnel::models::{ConnectionInfo, TunnelEvent, TunnelEventHandler, TunnelStatus};
+use crate::tunnel::shutdown::Shutdown;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -327,6 +328,71 @@ impl ReverseTunnel {
                 }
             }
         }
+    }
+
+    /// 启动反向隧道（客户端模式，支持优雅关闭）
+    pub async fn start_client_with_shutdown(&self, shutdown: &Shutdown) -> Result<()> {
+        use crate::tunnel::crypto::{CryptoLayer, derive_key};
+        use std::sync::Arc as StdArc;
+
+        self.config.validate()
+            .map_err(|e| FlyWheelError::Other { message: e })?;
+
+        let control_addr = self.config.remote_target.clone()
+            .ok_or_else(|| FlyWheelError::Other {
+                message: "反向隧道需要指定控制端地址".to_string(),
+            })?;
+
+        {
+            let mut status = self.status.write().await;
+            status.start();
+        }
+
+        let crypto = self.config.encryption_key.as_ref().map(|k| {
+            StdArc::new(CryptoLayer::new(&derive_key(k)))
+        });
+
+        self.event_handler.on_event(TunnelEvent::Started);
+        println!();
+        println!("╔════════════════════════════════════════════════════════════════════════════╗");
+        println!("║  {}", format!("反向隧道启动（客户端模式）"));
+        println!("║  {}", format!("控制端地址: {}", control_addr));
+        println!("║  {}", format!("监听端口: {}", self.config.local_addr.port()));
+        println!("║  {}", format!("加密: {}", if crypto.is_some() { "XChaCha20-Poly1305" } else { "无" }));
+        println!("╚════════════════════════════════════════════════════════════════════════════╝");
+        println!();
+        println!("按 Ctrl+C 优雅关闭隧道");
+        println!();
+
+        let mut retry_count = 0u64;
+
+        'outer: loop {
+            tokio::select! {
+                _ = shutdown.wait() => {
+                    break 'outer;
+                }
+                _ = async {
+                    match self.connect_to_control(&control_addr).await {
+                        Ok(_) => {
+                            retry_count = 0;
+                        }
+                        Err(e) => {
+                            retry_count += 1;
+                            self.event_handler.on_event(TunnelEvent::Error {
+                                message: format!("连接失败 (尝试 #{}): {}", retry_count, e),
+                            });
+                            if !shutdown.is_signalled() {
+                                sleep(Duration::from_secs(5)).await;
+                            }
+                        }
+                    }
+                } => {}
+            }
+        }
+
+        self.event_handler.on_event(TunnelEvent::Stopped);
+        println!("反向隧道已关闭");
+        Ok(())
     }
 
     /// 获取隧道状态

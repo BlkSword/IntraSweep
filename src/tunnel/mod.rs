@@ -5,17 +5,23 @@
 //! - 反向 TCP 端口转发
 //! - SOCKS5 代理
 //! - 多级跳板链式隧道
+//! - XChaCha20-Poly1305 加密传输
+//! - 连接多路复用
 
 pub mod chain;
 pub mod config;
+pub mod crypto;
 pub mod forward;
 pub mod models;
+pub mod mux;
 pub mod relay;
 pub mod reverse;
+pub mod shutdown;
 pub mod socks5;
 
 pub use chain::ChainTunnel;
 pub use config::{TunnelConfig, TunnelType};
+pub use crypto::{CryptoLayer, EncryptedStream, derive_key};
 pub use forward::ForwardTunnel;
 pub use models::{LogEventHandler, TunnelEventHandler};
 pub use reverse::ReverseTunnel;

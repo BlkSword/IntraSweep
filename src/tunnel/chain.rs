@@ -6,6 +6,7 @@ use crate::core::error::{FlyWheelError, Result};
 use crate::tunnel::config::TunnelConfig;
 use crate::tunnel::models::{ConnectionInfo, TunnelEvent, TunnelEventHandler, TunnelStatus};
 use crate::tunnel::relay;
+use crate::tunnel::shutdown::Shutdown;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -14,7 +15,7 @@ use tokio::time::{timeout, Duration};
 
 /// 链式隧道
 pub struct ChainTunnel {
-    config: TunnelConfig,
+    pub config: TunnelConfig,
     status: Arc<tokio::sync::RwLock<TunnelStatus>>,
     event_handler: Arc<dyn TunnelEventHandler>,
 }
@@ -275,6 +276,123 @@ impl ChainTunnel {
         println!("[链式] 已连接到最终目标: {}", target);
 
         Ok(current_stream)
+    }
+
+    /// 启动链式隧道（支持优雅关闭）
+    pub async fn start_with_shutdown(&self, shutdown: &Shutdown) -> Result<()> {
+        self.config.validate()
+            .map_err(|e| FlyWheelError::Other { message: e })?;
+
+        let target = self.config.remote_target.clone()
+            .ok_or_else(|| FlyWheelError::Other {
+                message: "链式隧道需要指定最终目标".to_string(),
+            })?;
+
+        {
+            let mut status = self.status.write().await;
+            status.start();
+        }
+
+        self.event_handler.on_event(TunnelEvent::Started);
+        println!();
+        println!("╔════════════════════════════════════════════════════════════════════════════╗");
+        println!("║  {}", format!("链式隧道启动"));
+        println!("║  {}", format!("监听地址: {}", self.config.local_addr));
+        println!("║  {}", format!("跳板数量: {}", self.config.hops.len()));
+        for (i, hop) in self.config.hops.iter().enumerate() {
+            println!("║  {}", format!("  跳板 {}: {}", i + 1, hop));
+        }
+        println!("║  {}", format!("最终目标: {}", target));
+        println!("╚════════════════════════════════════════════════════════════════════════════╝");
+        println!();
+        println!("按 Ctrl+C 优雅关闭隧道");
+        println!();
+
+        let listener = TcpListener::bind(&self.config.local_addr).await
+            .map_err(|e| FlyWheelError::Other {
+                message: format!("绑定端口 {} 失败: {}", self.config.local_addr, e),
+            })?;
+
+        let semaphore = Arc::new(Semaphore::new(self.config.max_connections));
+        let mut counter = 0u64;
+
+        loop {
+            tokio::select! {
+                result = listener.accept() => {
+                    match result {
+                        Ok((client, addr)) => {
+                            let permit = match semaphore.clone().try_acquire_owned() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    eprintln!("[警告] 连接数已达上限，拒绝: {}", addr);
+                                    drop(client);
+                                    continue;
+                                }
+                            };
+
+                            counter += 1;
+                            let conn_id = format!("chain-{}", counter);
+                            let local_addr = self.config.local_addr;
+                            let hops = self.config.hops.clone();
+                            let target = target.clone();
+                            let timeout_dur = Duration::from_secs(self.config.timeout_secs);
+                            let event_handler = self.event_handler.clone();
+                            let status = self.status.clone();
+
+                            tokio::spawn(async move {
+                                event_handler.on_event(TunnelEvent::Connected {
+                                    id: conn_id.clone(), local_addr, remote_addr: addr,
+                                });
+                                {
+                                    let mut st = status.write().await;
+                                    st.add_connection(ConnectionInfo::new(
+                                        conn_id.clone(), local_addr, addr,
+                                    ));
+                                }
+
+                                let result = Self::connect_through_hops(&hops, &target, timeout_dur).await;
+                                match result {
+                                    Ok(target_stream) => {
+                                        let stats = relay::relay(client, target_stream).await;
+                                        {
+                                            let mut st = status.write().await;
+                                            st.update_connection(&conn_id, stats.sent, stats.received);
+                                            st.remove_connection(&conn_id);
+                                        }
+                                        event_handler.on_event(TunnelEvent::DataTransferred {
+                                            id: conn_id.clone(), sent: stats.sent, received: stats.received,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        event_handler.on_event(TunnelEvent::Error {
+                                            message: format!("建立链式连接失败: {}", e),
+                                        });
+                                        {
+                                            let mut st = status.write().await;
+                                            st.remove_connection(&conn_id);
+                                        }
+                                    }
+                                }
+                                event_handler.on_event(TunnelEvent::Disconnected { id: conn_id });
+                                drop(permit);
+                            });
+                        }
+                        Err(e) => {
+                            self.event_handler.on_event(TunnelEvent::Error {
+                                message: format!("接受连接失败: {}", e),
+                            });
+                        }
+                    }
+                }
+                _ = shutdown.wait() => {
+                    break;
+                }
+            }
+        }
+
+        self.event_handler.on_event(TunnelEvent::Stopped);
+        println!("链式隧道已关闭");
+        Ok(())
     }
 
     /// 获取隧道状态

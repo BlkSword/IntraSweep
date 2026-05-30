@@ -577,7 +577,7 @@ mod tests {
         assert_eq!(ServiceIdentifier::guess_service_by_port(80), Some("http".to_string()));
         assert_eq!(ServiceIdentifier::guess_service_by_port(443), Some("https".to_string()));
         assert_eq!(ServiceIdentifier::guess_service_by_port(22), Some("ssh".to_string()));
-        assert_eq!(ServiceIdentifier::guess_service_by_port(99999), None);
+        assert_eq!(ServiceIdentifier::guess_service_by_port(0), None);
     }
 
     #[test]

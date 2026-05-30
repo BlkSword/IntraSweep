@@ -77,6 +77,8 @@ digest = "0.10"
 base64 = "0.22"
 native-tls = "0.2"
 sha2 = "0.10"
+chacha20poly1305 = "0.10"
+rand = "0.8"
 
 # 平台特定依赖
 [target.'cfg(windows)'.dependencies]

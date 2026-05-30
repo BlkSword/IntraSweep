@@ -5,13 +5,13 @@ IntraSweep 是一个基于 Rust 开发的高性能内网渗透辅助工具，提
 ## 特性
 
 - **高性能扫描** - 异步 I/O + 多级并发架构，支持 TCP Connect/SYN/UDP 扫描、ARP/ICMP 主机发现
-- **交互式向导** - 所有功能均支持交互式配置，无需记忆复杂参数
-- **漏洞扫描** - 内置 30 条 PoC 规则，支持外部 YAML/JSON 声明式 PoC 和 Python/PowerShell 脚本 PoC，多步骤变量提取
-- **Web 指纹识别** - 内置 34 条指纹规则，自动识别内网 Web 应用
+- **交互式向导** - 7 大功能均支持交互式配置向导，无需记忆复杂参数
+- **漏洞扫描** - 内置 31 条 PoC 规则，支持外部 YAML/JSON 声明式 PoC 和 Python/PowerShell 脚本 PoC，多步骤变量提取
+- **Web 指纹识别** - 内置 33 条指纹规则，覆盖中间件/OA/DevOps/基础设施
 - **AD 域枚举** - LDAP 查询用户/组/计算机，Kerberoasting、AS-REP Roasting、BloodHound 数据导出
 - **提权检测** - Windows 6 类 / Linux 8 类自动化提权向量检查
-- **密码爆破** - 8 种服务（SSH/RDP/Redis/PostgreSQL/MySQL/MSSQL/MongoDB/WinRM）， Semaphore 并发控制 + 命中即停
-- **内网穿透** - 正向/反向隧道、SOCKS5 代理、多级链式跳板
+- **密码爆破** - 8 种服务（SSH/RDP/Redis/PostgreSQL/MySQL/MSSQL/MongoDB/WinRM），Semaphore 并发控制 + 命中即停
+- **内网穿透** - 正向/反向隧道、SOCKS5 代理、多级链式跳板，支持 XChaCha20-Poly1305 加密和连接多路复用，Ctrl+C 优雅关闭
 - **格式化输出** - JSON/CSV 双格式导出
 - **OPSEC 优化** - LTO + strip + codegen-units=1 最小体积、敏感字符串 XOR 编译期混淆
 - **模块化架构** - CLI 层与业务逻辑分离，各功能模块独立自治
@@ -46,7 +46,7 @@ src/
 │   └── system.rs     信息收集命令
 ├── scanner/          扫描引擎（主机发现、端口扫描、服务探测、Web 指纹）
 ├── cracker/          密码爆破（8 种服务、并发引擎、字典管理）
-├── tunnel/           网络穿透（正向/反向/SOCKS5/链式、双向中继）
+├── tunnel/           网络穿透（正向/反向/SOCKS5/链式、加密、多路复用、双向中继、优雅关闭）
 ├── vuln/             漏洞扫描（PoC 引擎、内置规则、外部加载、脚本执行）
 ├── ad/               AD 域枚举（LDAP 查询、Kerberoasting、BloodHound 导出）
 ├── privesc/          提权检测（Windows/Linux 平台检查）
@@ -237,7 +237,7 @@ intrasweep privesc --format csv -o privesc_result.csv
 ### 内网穿透
 
 ```bash
-# 交互式向导
+# 交互式向导（推荐，包含加密配置）
 intrasweep tunnel
 
 # 正向隧道 — 本地端口转发到远程目标
@@ -252,7 +252,13 @@ intrasweep tunnel socks5 -L 1080 --socks5-username user --socks5-password pass
 
 # 链式隧道 — 多级跳板连接
 intrasweep tunnel chain -H 10.0.0.1:2222 -H 10.0.0.2:3333 -t 192.168.2.100:80
+
+# 加密隧道 — XChaCha20-Poly1305 AEAD 加密传输
+intrasweep tunnel forward -t 192.168.1.100:3389 -L 8080 --encryption-key "my-secret"
+intrasweep tunnel reverse -t 10.0.0.1:8888 -L 8080 --encryption-key "my-secret"
 ```
+
+所有隧道类型支持 Ctrl+C 优雅关闭，收到信号后自动断开连接并清理资源。
 
 ## 命令参考
 
@@ -282,7 +288,7 @@ intrasweep tunnel chain -H 10.0.0.1:2222 -H 10.0.0.2:3333 -t 192.168.2.100:80
 | `<target>` | 目标主机，可选，不填进入交互式 |
 | `-s, --service` | 服务类型：`ssh` `rdp` `redis` `postgres` `mysql` `mssql` `mongodb` `winrm` |
 | `-p, --port` | 端口（默认使用服务默认端口） |
-| `-u, --usernames` | 用户名（逗号分隔，或 `@文件`） |
+| `-u, --usernames` | 用户名（逗号分隔） |
 | `-U, --username-file` | 用户名字典文件 |
 | `-P, --password-file` | 密码字典文件 |
 | `-c, --concurrency` | 并发数（默认 10） |
@@ -339,17 +345,19 @@ intrasweep tunnel chain -H 10.0.0.1:2222 -H 10.0.0.2:3333 -t 192.168.2.100:80
 | `-H, --hop` | 跳板主机（可多次指定） |
 | `--socks5-username` | SOCKS5 认证用户名 |
 | `--socks5-password` | SOCKS5 认证密码 |
+| `--encryption-key` | 加密密钥（设置后启用 XChaCha20-Poly1305 AEAD 加密） |
+| `--mux` | 启用连接多路复用 |
 | `-c, --max-connections` | 最大并发连接（默认 100） |
 | `-t, --timeout` | 超时秒数（默认 30） |
 
 ## 漏洞扫描
 
-### 内置 PoC 规则（30 条）
+### 内置 PoC 规则（31 条）
 
 | 类别 | 数量 | 规则 |
 |------|------|------|
 | 反序列化 | 3 | Shiro-550, Fastjson, Log4Shell (CVE-2021-44228) |
-| 未授权访问 | 14 | Nacos, Jenkins, Elasticsearch, Harbor, Redis, MongoDB, FTP 匿名, SMB 空会话, LDAP 空绑定, MSSQL SA 空密码, Memcached, ZooKeeper, Docker API, MySQL Root 空密码 |
+| 未授权访问 | 15 | Nacos, Jenkins, Elasticsearch, Harbor, Redis, MongoDB, FTP 匿名, SMB 空会话, LDAP 空绑定, MSSQL SA 空密码, Memcached, ZooKeeper, Docker API, MySQL Root 空密码, phpMyAdmin |
 | OA 系统 | 4 | 泛微OA, 致远OA, 通达OA, 蓝凌OA |
 | RCE | 2 | WebLogic CVE-2020-14882, ThinkPHP 5.x RCE |
 | 信息泄露 | 4 | .git 目录, .env 文件, Druid 监控, Spring Boot Actuator |
@@ -531,11 +539,11 @@ script:
 
 ## Web 指纹识别
 
-内置 34 条指纹规则，覆盖常见内网 Web 应用：
+内置 33 条指纹规则，覆盖常见内网 Web 应用：
 
 | 类别 | 支持的应用 |
 |------|-----------|
-| 中间件 | WebLogic, Apache Tomcat, JBoss, WebSphere, Nginx, Apache HTTPD, OpenResty |
+| 中间件 | WebLogic, Apache Tomcat, JBoss, WebSphere, Nginx, Apache HTTPD, IIS, OpenResty |
 | 管理面板 | 宝塔面板, phpMyAdmin, Adminer |
 | OA 系统 | 泛微OA, 致远OA, 蓝凌OA, 通达OA |
 | 开发工具 | Jenkins, GitLab, Gitea, SonarQube |

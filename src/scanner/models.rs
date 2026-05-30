@@ -90,7 +90,7 @@ pub struct HostResult {
 }
 
 /// 端口信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PortInfo {
     /// 端口号
     pub port: u16,

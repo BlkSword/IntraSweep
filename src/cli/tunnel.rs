@@ -6,6 +6,7 @@ use crate::cli::{print_banner, InteractiveMenu, TUNNEL_TYPES};
 use crate::core::error::FlyWheelError;
 use crate::core::Result;
 use crate::output::color::{print_error, print_info, print_success};
+use crate::tunnel::shutdown::Shutdown;
 use crate::tunnel::{TunnelConfig, TunnelManager, TunnelType};
 
 /// 隧道命令入口
@@ -103,6 +104,12 @@ fn run_tunnel(
         config = config.with_socks5_auth(username, password);
     }
 
+    // 处理加密密钥
+    if let Some(ref key) = config.encryption_key {
+        print_success(&format!("已启用加密 (XChaCha20-Poly1305)"));
+        let _ = key; // 加密密钥在隧道内部使用
+    }
+
     // 验证配置
     config
         .validate()
@@ -111,29 +118,32 @@ fn run_tunnel(
     // 创建隧道管理器
     let manager = TunnelManager::new();
 
+    // 优雅关闭
+    let shutdown = Shutdown::on_ctrl_c();
+
     // 启动隧道
     let rt = tokio::runtime::Runtime::new()?;
 
     match tunnel_type_enum {
         TunnelType::Forward => {
             let tunnel = manager.create_forward_tunnel(config);
-            rt.block_on(tunnel.start())?;
+            rt.block_on(tunnel.start_with_shutdown(&shutdown))?;
         }
         TunnelType::Reverse => {
             let tunnel = manager.create_reverse_tunnel(config);
-            // 默认使用客户端模式
-            rt.block_on(tunnel.start_client())?;
+            rt.block_on(tunnel.start_client_with_shutdown(&shutdown))?;
         }
         TunnelType::Socks5 => {
             let server = manager.create_socks5_server(config);
-            rt.block_on(server.start())?;
+            rt.block_on(server.start_with_shutdown(&shutdown))?;
         }
         TunnelType::Chain => {
             let tunnel = manager.create_chain_tunnel(config);
-            rt.block_on(tunnel.start())?;
+            rt.block_on(tunnel.start_with_shutdown(&shutdown))?;
         }
     }
 
+    println!("隧道已关闭");
     Ok(())
 }
 
@@ -301,6 +311,18 @@ fn run_interactive_tunnel(
         initial_timeout
     };
 
+    // 加密选项
+    let enc_enabled = InteractiveMenu::read_input("是否启用加密? [y/N]: ");
+    let enc_enabled = enc_enabled.to_lowercase() == "y";
+    if enc_enabled {
+        let key = InteractiveMenu::read_input_required(
+            "请输入加密密钥: ",
+            "加密密钥不能为空",
+        );
+        config = config.with_encryption_key(key);
+        print_success("已启用 XChaCha20-Poly1305 加密");
+    }
+
     config = config
         .with_max_connections(max_connections)
         .with_timeout(timeout);
@@ -320,6 +342,7 @@ fn run_interactive_tunnel(
     }
     println!("  最大连接:     {}", max_connections);
     println!("  超时:         {} 秒", timeout);
+    println!("  加密:         {}", if enc_enabled { "启用" } else { "未启用" });
     println!();
 
     if !InteractiveMenu::confirm("确认启动隧道? [Y/n]: ") {
@@ -331,28 +354,30 @@ fn run_interactive_tunnel(
     print_info("启动隧道...");
     println!();
 
+    let shutdown = Shutdown::on_ctrl_c();
     let manager = TunnelManager::new();
     let rt = tokio::runtime::Runtime::new()?;
 
     match tunnel_type_enum {
         TunnelType::Forward => {
             let tunnel = manager.create_forward_tunnel(config);
-            rt.block_on(tunnel.start())?;
+            rt.block_on(tunnel.start_with_shutdown(&shutdown))?;
         }
         TunnelType::Reverse => {
             let tunnel = manager.create_reverse_tunnel(config);
-            rt.block_on(tunnel.start_client())?;
+            rt.block_on(tunnel.start_client_with_shutdown(&shutdown))?;
         }
         TunnelType::Socks5 => {
             let server = manager.create_socks5_server(config);
-            rt.block_on(server.start())?;
+            rt.block_on(server.start_with_shutdown(&shutdown))?;
         }
         TunnelType::Chain => {
             let tunnel = manager.create_chain_tunnel(config);
-            rt.block_on(tunnel.start())?;
+            rt.block_on(tunnel.start_with_shutdown(&shutdown))?;
         }
     }
 
+    println!("隧道已关闭");
     Ok(())
 }
 

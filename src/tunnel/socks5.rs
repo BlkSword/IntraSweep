@@ -6,6 +6,7 @@ use crate::core::error::{FlyWheelError, Result};
 use crate::tunnel::config::TunnelConfig;
 use crate::tunnel::models::{ConnectionInfo, TunnelEvent, TunnelEventHandler, TunnelStatus};
 use crate::tunnel::relay;
+use crate::tunnel::shutdown::Shutdown;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -51,7 +52,7 @@ const REP_ADDRESS_TYPE_NOT_SUPPORTED: u8 = 0x08;
 
 /// SOCKS5 代理服务器
 pub struct Socks5Server {
-    config: TunnelConfig,
+    pub config: TunnelConfig,
     status: Arc<tokio::sync::RwLock<TunnelStatus>>,
     event_handler: Arc<dyn TunnelEventHandler>,
 }
@@ -407,6 +408,77 @@ impl Socks5Server {
             })?;
 
         Ok(target_addr)
+    }
+
+    /// 启动 SOCKS5 代理（支持优雅关闭）
+    pub async fn start_with_shutdown(&self, shutdown: &Shutdown) -> Result<()> {
+        let listener = TcpListener::bind(&self.config.local_addr).await
+            .map_err(|e| FlyWheelError::Other {
+                message: format!("绑定端口 {} 失败: {}", self.config.local_addr, e),
+            })?;
+
+        {
+            let mut status = self.status.write().await;
+            status.start();
+        }
+
+        self.event_handler.on_event(TunnelEvent::Started);
+        println!();
+        println!("╔════════════════════════════════════════════════════════════════════════════╗");
+        println!("║  {}", format!("SOCKS5 代理启动"));
+        println!("║  {}", format!("监听地址: {}", self.config.local_addr));
+        println!("║  {}", format!("认证方式: {}", if self.config.socks5_username.is_some() { "用户名/密码" } else { "无需认证" }));
+        println!("║  {}", format!("最大连接: {}", self.config.max_connections));
+        println!("╚════════════════════════════════════════════════════════════════════════════╝");
+        println!();
+        println!("按 Ctrl+C 优雅关闭代理");
+        println!();
+
+        let semaphore = Arc::new(Semaphore::new(self.config.max_connections));
+
+        loop {
+            tokio::select! {
+                result = listener.accept() => {
+                    match result {
+                        Ok((client, addr)) => {
+                            let permit = match semaphore.clone().try_acquire_owned() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    eprintln!("[警告] 连接数已达上限，拒绝: {}", addr);
+                                    drop(client);
+                                    continue;
+                                }
+                            };
+
+                            let conn_id = format!("socks5-{}", Uuid::new_v4());
+                            let event_handler = self.event_handler.clone();
+                            let status = self.status.clone();
+                            let config = self.config.clone();
+
+                            tokio::spawn(async move {
+                                Self::handle_client(
+                                    client, addr, conn_id,
+                                    event_handler, status, config,
+                                ).await;
+                                drop(permit);
+                            });
+                        }
+                        Err(e) => {
+                            self.event_handler.on_event(TunnelEvent::Error {
+                                message: format!("接受连接失败: {}", e),
+                            });
+                        }
+                    }
+                }
+                _ = shutdown.wait() => {
+                    break;
+                }
+            }
+        }
+
+        self.event_handler.on_event(TunnelEvent::Stopped);
+        println!("SOCKS5 代理已关闭");
+        Ok(())
     }
 
     /// 获取代理状态
