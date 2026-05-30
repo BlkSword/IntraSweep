@@ -124,74 +124,101 @@ fn run_interactive_vuln(
     print_info(&format!("IntraSweep 交互式{}向导", vuln_label));
     println!();
 
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [1/4] 扫描目标");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    // 步骤 1: 目标输入
+    InteractiveMenu::print_step(1, 5, "扫描目标");
     println!("输入格式: IP, CIDR, IP范围, host:port (逗号分隔)");
     println!();
+    println!("示例: 192.168.1.0/24 | 10.0.0.1:8080 | 192.168.1.1,192.168.1.2");
+    println!();
 
-    let targets_input = InteractiveMenu::read_input("请输入扫描目标: ");
-    if targets_input.is_empty() {
-        print_error("未输入目标");
-        return Ok(());
-    }
+    let targets_input = InteractiveMenu::read_input_required("请输入扫描目标: ", "目标不能为空，请重新输入");
     let targets: Vec<String> = targets_input.split(',').map(|s| s.trim().to_string()).collect();
-    println!();
+    print_success(&format!("已设置 {} 个目标", targets.len()));
 
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [2/4] PoC 规则");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    // 步骤 2: PoC 规则
+    InteractiveMenu::print_step(2, 5, "PoC 规则");
     println!("  1. 使用内置PoC规则 ({} 条)", crate::vuln::builtin::get_builtin_pocs().len());
     println!("  2. 加载外部PoC文件");
     println!("  3. 内置 + 外部");
     println!();
 
-    let choice = InteractiveMenu::read_number("请选择 [1-3]: ", 1, 3);
+    let choice = InteractiveMenu::read_number_opt("请选择 [1-3, 默认 1]: ", 1, 3, 1);
     let external_path = if choice >= 2 {
-        let path = InteractiveMenu::read_input("请输入PoC文件/目录路径: ");
-        if !path.is_empty() {
-            Some(PathBuf::from(path))
-        } else {
-            None
-        }
+        let path = InteractiveMenu::read_input_required("请输入PoC文件/目录路径: ", "路径不能为空");
+        print_success(&format!("外部PoC路径: {}", path));
+        Some(PathBuf::from(path))
     } else {
-        poc_file
+        None
     };
 
-    println!();
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [3/4] 严重性过滤 (可选)");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    // 步骤 3: 严重性过滤
+    InteractiveMenu::print_step(3, 5, "严重性过滤 (可选)");
     println!("  可选: critical, high, medium, low, info (留空不过滤)");
-    let sev_input = InteractiveMenu::read_input("严重性: ");
-    let final_severity = if sev_input.is_empty() { severity } else { Some(sev_input) };
+    println!();
+    let valid_severities = ["critical", "high", "medium", "low", "info"];
+    let sev_input = InteractiveMenu::read_input("严重性 [留空=不过滤]: ");
+    let final_severity = if sev_input.is_empty() {
+        severity
+    } else {
+        let sev_lower = sev_input.to_lowercase();
+        if valid_severities.contains(&sev_lower.as_str()) {
+            print_success(&format!("已选择严重性: {}", sev_lower));
+            Some(sev_lower)
+        } else {
+            print_error(&format!("无效严重性 '{}'，已忽略过滤", sev_input));
+            None
+        }
+    };
 
+    // 步骤 4: 高级选项
+    InteractiveMenu::print_step(4, 5, "高级选项 (可选)");
+    println!("留空则使用默认值");
     println!();
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [4/4] 确认配置");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+
+    let cat_input = InteractiveMenu::read_input("类别过滤 (例: 未授权, 反序列化): ");
+    let final_category = if cat_input.is_empty() {
+        category
+    } else {
+        print_success(&format!("已设置类别过滤: {}", cat_input));
+        Some(cat_input)
+    };
+
+    let conc_input = InteractiveMenu::read_input(&format!("并发数 (默认: {}): ", concurrency));
+    let final_concurrency = if conc_input.is_empty() {
+        concurrency
+    } else {
+        conc_input.parse::<usize>().unwrap_or(concurrency)
+    };
+
+    let timeout_input = InteractiveMenu::read_input(&format!("超时秒数 (默认: {}): ", timeout));
+    let final_timeout = if timeout_input.is_empty() {
+        timeout
+    } else {
+        timeout_input.parse::<u64>().unwrap_or(timeout)
+    };
+
+    // 步骤 5: 确认
+    InteractiveMenu::print_step(5, 5, "确认配置");
     println!("  目标: {}", targets.join(", "));
-    println!("  并发数: {}", concurrency);
-    println!("  超时: {}s", timeout);
-    if final_severity.is_some() {
-        println!("  严重性过滤: {}", final_severity.as_deref().unwrap());
+    println!("  并发数: {}", final_concurrency);
+    println!("  超时: {}s", final_timeout);
+    if let Some(ref sev) = final_severity {
+        println!("  严重性过滤: {}", sev);
     }
-    if external_path.is_some() {
-        println!("  外部PoC: {:?}", external_path.as_ref().unwrap());
+    if let Some(ref cat) = final_category {
+        println!("  类别过滤: {}", cat);
+    }
+    if let Some(ref ext) = external_path {
+        println!("  外部PoC: {}", ext.display());
     }
     println!();
 
-    let confirm = InteractiveMenu::read_input("开始扫描? [Y/n]: ");
-    if confirm.eq_ignore_ascii_case("n") {
-        print_info("已取消");
+    if !InteractiveMenu::confirm("确认开始扫描? [Y/n]: ") {
+        print_info("已取消扫描");
         return Ok(());
     }
 
-    run_vuln_scan(targets, external_path, final_severity, category, output_fmt, output, concurrency, timeout)
+    run_vuln_scan(targets, external_path, final_severity, final_category, output_fmt, output, final_concurrency, final_timeout)
 }
 
 fn print_vuln_results(result: &crate::vuln::VulnScanResult) {

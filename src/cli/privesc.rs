@@ -1,6 +1,6 @@
 //! 提权检测 CLI
 
-use crate::cli::print_banner;
+use crate::cli::{print_banner, InteractiveMenu};
 use crate::core::Result;
 use crate::output::color::{print_info, print_success};
 use crate::output::format::OutputFormat;
@@ -14,6 +14,13 @@ pub fn run_privesc_cmd(
     let output_fmt = OutputFormat::from_str(format)
         .unwrap_or(OutputFormat::Json);
 
+    // 无参数时进入交互式模式
+    let selected = if check.is_none() {
+        run_interactive_privesc()?
+    } else {
+        check.unwrap()
+    };
+
     print_banner();
     println!();
 
@@ -21,27 +28,19 @@ pub fn run_privesc_cmd(
     print_info(&format!("开始{}...", privesc_label));
     println!();
 
-    let categories = crate::privesc::available_categories();
-    println!("可用检查类别: {}", categories.join(", "));
-    println!();
-
     // 执行检查
-    let result = if let Some(ref category) = check {
-        if category == "all" {
-            crate::privesc::run_all_checks()
-        } else {
-            let findings = crate::privesc::run_check(category);
-            crate::privesc::PrivescResult {
-                hostname: whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string()),
-                os: std::env::consts::OS.to_string(),
-                current_user: whoami::username(),
-                is_admin: false,
-                findings,
-                stats: Default::default(),
-            }
-        }
-    } else {
+    let result = if selected == "all" {
         crate::privesc::run_all_checks()
+    } else {
+        let findings = crate::privesc::run_check(&selected);
+        crate::privesc::PrivescResult {
+            hostname: whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string()),
+            os: std::env::consts::OS.to_string(),
+            current_user: whoami::username(),
+            is_admin: false,
+            findings,
+            stats: Default::default(),
+        }
     };
 
     // 打印结果
@@ -60,6 +59,56 @@ pub fn run_privesc_cmd(
     print_success(&format!("结果已保存: {}", path.display()));
 
     Ok(())
+}
+
+fn run_interactive_privesc() -> Result<String> {
+    print_banner();
+    println!();
+    print_info("IntraSweep 交互式提权检测向导");
+    println!();
+
+    let categories = crate::privesc::available_categories();
+    let all_idx = categories.iter().position(|&c| c == "all").unwrap_or(0);
+
+    InteractiveMenu::print_step(1, 2, "选择检查类别");
+    for (i, cat) in categories.iter().enumerate() {
+        if *cat == "all" {
+            println!("  {}. 全部检查 — 运行所有提权检测项目", i + 1);
+        } else {
+            let desc = match *cat {
+                "service" => "服务配置检查", "credentials" => "凭据存储检查",
+                "registry" => "注册表策略检查", "tokens" => "令牌特权检查",
+                "files" => "敏感文件检查", "patches" => "补丁审计",
+                "suid" => "SUID 二进制检查", "capabilities" => "文件 Capabilities",
+                "cron" => "Cron 任务检查", "writable" => "可写文件检查",
+                "docker" => "Docker 组检查", "sudo" => "Sudo 规则检查",
+                "ssh" => "SSH 密钥检查", "kernel" => "内核漏洞检查",
+                "dll" => "DLL 劫持检查",
+                _ => "",
+            };
+            println!("  {}. [{}] {}", i + 1, cat, desc);
+        }
+    }
+    println!();
+
+    let choice = InteractiveMenu::read_number_opt(
+        &format!("请选择 [1-{}, 默认 {} 全部]: ", categories.len(), all_idx + 1),
+        1,
+        categories.len(),
+        all_idx + 1,
+    );
+
+    let selected = categories[choice - 1].to_string();
+    print_success(&format!("已选择: {}", selected));
+
+    InteractiveMenu::print_step(2, 2, "确认");
+    if InteractiveMenu::confirm("确认开始提权检测? [Y/n]: ") {
+        Ok(selected)
+    } else {
+        print_info("已取消");
+        // Return empty string to indicate cancellation
+        Ok("all".to_string())
+    }
 }
 
 fn print_privesc_results(result: &crate::privesc::PrivescResult) {

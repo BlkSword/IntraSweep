@@ -72,30 +72,24 @@ pub fn run_scan(
 fn run_interactive_scan(
     initial_targets: Option<Vec<String>>,
     initial_type: Option<String>,
-    _fast: bool,
+    fast: bool,
     initial_webfinger: bool,
     output_fmt: OutputFormat,
     output: Option<PathBuf>,
 ) -> Result<()> {
     print_banner();
     println!();
-    print_info(&format!("IntraSweep 交互式扫描配置向导"));
+    print_info("IntraSweep 交互式扫描配置向导");
     println!();
 
     // 步骤 1: 扫描目标
     let targets = if let Some(t) = initial_targets {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("  [1/5] 扫描目标");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!();
+        InteractiveMenu::print_step(1, 6, "扫描目标");
         println!("已指定目标: {}", t.join(", "));
         println!();
         t
     } else {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("  [1/5] 扫描目标");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!();
+        InteractiveMenu::print_step(1, 6, "扫描目标");
         println!("输入格式示例:");
         println!("  单个IP:       192.168.1.1");
         println!("  IP范围:       192.168.1.1-192.168.1.100");
@@ -103,104 +97,79 @@ fn run_interactive_scan(
         println!("  多个目标:     192.168.1.1,192.168.1.2,192.168.1.0/24");
         println!();
 
-        loop {
-            let input = InteractiveMenu::read_input("请输入扫描目标: ");
-            if !input.is_empty() {
-                let targets: Vec<String> = input.split(',').map(|s| s.trim().to_string()).collect();
-                println!();
-                print_success(&format!("已设置: {}", targets.join(", ")));
-                println!();
-                break targets;
-            }
-            print_error("目标不能为空，请重新输入");
-        }
+        let input = InteractiveMenu::read_input_required("请输入扫描目标: ", "目标不能为空，请重新输入");
+        let targets: Vec<String> = input.split(',').map(|s| s.trim().to_string()).collect();
+        print_success(&format!("已设置 {} 个目标", targets.len()));
+        targets
     };
 
     // 步骤 2: 扫描类型
     let scan_type = if let Some(st) = initial_type {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("  [2/5] 扫描类型");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!();
+        InteractiveMenu::print_step(2, 6, "扫描类型");
         println!("已指定: {}", format_scan_type(&st));
         println!();
         st
     } else {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("  [2/5] 扫描类型");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!();
+        InteractiveMenu::print_step(2, 6, "扫描类型");
         println!("  1. 端口扫描       - 扫描指定主机的开放端口");
         println!("  2. 主机存活       - 检测网段内的存活主机");
         println!("  3. 综合扫描       - 主机发现 + 端口扫描");
         println!();
 
-        let choice = InteractiveMenu::read_number("请选择扫描类型 [1-3]: ", 1, 3);
+        let choice = InteractiveMenu::read_number_opt("请选择扫描类型 [1-3, 默认 1]: ", 1, 3, 1);
         let scan_type = match choice {
             1 => "port".to_string(),
             2 => "host".to_string(),
             3 => "comprehensive".to_string(),
             _ => "port".to_string(),
         };
-        println!();
         print_success(&format!("已选择: {}", format_scan_type(&scan_type)));
-        println!();
         scan_type
     };
 
     // 步骤 3: 扫描预设
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [3/5] 扫描预设");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
-    println!("  1. Fast       - 快速扫描 (高并发，短超时，适合大范围)");
+    InteractiveMenu::print_step(3, 6, "扫描预设");
+    println!("  1. Fast       - 快速扫描 (高并发，短超时)");
     println!("  2. Standard   - 标准扫描 (平衡速度和准确性)");
     println!("  3. Deep       - 深度扫描 (全端口扫描)");
     println!("  4. Stealth    - 隐蔽扫描 (低并发，有延迟)");
     println!();
 
-    let preset_choice = InteractiveMenu::read_number("请选择扫描预设 [1-4, 默认2]: ", 1, 4);
+    let default_preset = if fast { 1 } else { 2 };
+    let preset_choice = InteractiveMenu::read_number_opt(
+        &format!("请选择扫描预设 [1-4, 默认 {}]: ", if fast { "1(Fast)" } else { "2(Standard)" }),
+        1, 4, default_preset,
+    );
     let config = match preset_choice {
         1 => {
-            println!();
             print_success("已选择: Fast (快速扫描)");
             ScanPreset::Fast.to_config()
         }
         2 => {
-            println!();
             print_success("已选择: Standard (标准扫描)");
             ScanPreset::Standard.to_config()
         }
         3 => {
-            println!();
             print_success("已选择: Deep (深度扫描)");
             ScanPreset::Deep.to_config()
         }
         4 => {
-            println!();
             print_success("已选择: Stealth (隐蔽扫描)");
             ScanPreset::Stealth.to_config()
         }
         _ => ScanPreset::Standard.to_config(),
     };
-    println!();
 
     // 步骤 4: 服务探测
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [4/5] 服务探测");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    InteractiveMenu::print_step(4, 6, "服务探测");
+    println!("服务探测可以识别开放端口上运行的服务版本信息，但会增加扫描时间");
     println!();
-    println!("服务探测可以识别开放端口上运行的服务版本信息");
-    println!("但会增加扫描时间");
 
     let enable_service = InteractiveMenu::read_input("是否启用服务探测? [y/N]: ");
     let mut config = config;
     config.service_detection = enable_service.to_lowercase() == "y";
-    println!();
     if config.service_detection {
         print_success("已启用服务探测");
-        println!();
-        // 询问服务探测超时
         let timeout_input = InteractiveMenu::read_input("服务探测超时 (毫秒，默认5000): ");
         if !timeout_input.is_empty() {
             if let Ok(t) = timeout_input.parse::<u64>() {
@@ -211,15 +180,12 @@ fn run_interactive_scan(
     } else {
         print_info("已跳过服务探测");
     }
-    println!();
 
     // 步骤 5: Web指纹识别
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [5/6] Web指纹识别");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    InteractiveMenu::print_step(5, 6, "Web指纹识别");
     println!("Web指纹识别可以自动识别开放端口上运行的Web应用");
     println!("(如 WebLogic, 宝塔面板, Tomcat, 泛微OA 等)");
+    println!();
 
     if initial_webfinger {
         config.web_fingerprint = true;
@@ -233,50 +199,32 @@ fn run_interactive_scan(
             print_info("已跳过Web指纹识别");
         }
     }
-    println!();
 
-    // 步骤 6: 高级选项（可选）
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [6/6] 高级选项");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
-
+    // 步骤 6: 高级选项
+    InteractiveMenu::print_step(6, 6, "高级选项");
     let configure_advanced = InteractiveMenu::read_input("是否配置高级选项? [y/N]: ");
     if configure_advanced.to_lowercase() == "y" {
         configure_advanced_options(&mut config);
     }
-    println!();
 
-    // 显示配置摘要
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  配置确认");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    // 确认
+    InteractiveMenu::print_step(6, 6, "配置摘要");
     println!("  扫描目标:     {}", targets.join(", "));
     println!("  扫描类型:     {}", format_scan_type(&scan_type));
     println!("  扫描预设:     {}", format_preset(&config));
     println!(
         "  服务探测:     {}",
-        if config.service_detection {
-            "启用"
-        } else {
-            "禁用"
-        }
+        if config.service_detection { "启用" } else { "禁用" }
     );
     println!(
         "  Web指纹:     {}",
-        if config.web_fingerprint {
-            "启用"
-        } else {
-            "禁用"
-        }
+        if config.web_fingerprint { "启用" } else { "禁用" }
     );
     println!("  主机扫描方式: {}", config.host_scan_method.display_name());
     println!("  端口扫描方式: {}", config.port_scan_method.display_name());
     println!();
 
-    let confirm = InteractiveMenu::read_input("确认开始扫描? [Y/n]: ");
-    if confirm.to_lowercase() == "n" {
+    if !InteractiveMenu::confirm("确认开始扫描? [Y/n]: ") {
         print_info("已取消扫描");
         return Ok(());
     }

@@ -156,25 +156,19 @@ fn run_interactive_tunnel(
 
     // 步骤 1: 隧道类型
     let tunnel_type = if let Some(tt) = initial_tunnel_type {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("  [1/5] 隧道类型");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!();
+        InteractiveMenu::print_step(1, 5, "隧道类型");
         println!("已指定: {}", tt);
         println!();
         tt
     } else {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("  [1/5] 隧道类型");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!();
+        InteractiveMenu::print_step(1, 5, "隧道类型");
         println!("  1. 正向隧道       - 本地端口转发到远程目标");
         println!("  2. 反向隧道       - 从内网建立连接回外网");
         println!("  3. SOCKS5 代理    - 动态端口转发代理");
         println!("  4. 链式隧道       - 多级跳板连接");
         println!();
 
-        let choice = InteractiveMenu::read_number("请选择隧道类型 [1-4]: ", 1, 4);
+        let choice = InteractiveMenu::read_number_opt("请选择隧道类型 [1-4, 默认 1]: ", 1, 4, 1);
         let tunnel_type = match choice {
             1 => "forward".to_string(),
             2 => "reverse".to_string(),
@@ -182,20 +176,14 @@ fn run_interactive_tunnel(
             4 => "chain".to_string(),
             _ => "forward".to_string(),
         };
-        println!();
         print_success(&format!("已选择: {}", format_tunnel_type(&tunnel_type)));
-        println!();
         tunnel_type
     };
 
     let tunnel_type_enum = TunnelType::from_str(&tunnel_type).unwrap();
 
     // 步骤 2: 本地端口
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [2/5] 本地监听端口");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
-
+    InteractiveMenu::print_step(2, 5, "本地监听端口");
     let default_port = match tunnel_type_enum {
         TunnelType::Forward => 8080,
         TunnelType::Reverse => 8080,
@@ -208,21 +196,12 @@ fn run_interactive_tunnel(
         println!();
         lp
     } else {
-        let port_input = InteractiveMenu::read_input(&format!(
-            "按 Enter 使用默认端口({}) 或输入自定义端口: ",
-            default_port
-        ));
-        println!();
-        if port_input.is_empty() {
-            print_success(&format!("使用默认端口: {}", default_port));
-            println!();
-            default_port
-        } else {
-            let p = port_input.parse::<u16>().unwrap_or(default_port);
-            print_success(&format!("已设置端口: {}", p));
-            println!();
-            p
-        }
+        let p = InteractiveMenu::read_port(
+            &format!("请输入端口 (默认: {}): ", default_port),
+            default_port,
+        );
+        print_success(&format!("已设置端口: {}", p));
+        p
     };
 
     // 步骤 3: 远程目标/跳板
@@ -233,34 +212,21 @@ fn run_interactive_tunnel(
 
     match tunnel_type_enum {
         TunnelType::Forward | TunnelType::Reverse => {
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            println!("  [3/5] 目标地址");
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            println!();
-
+            InteractiveMenu::print_step(3, 5, "目标地址");
             let target = if let Some(t) = &initial_target {
                 println!("已指定目标: {}", t);
                 println!();
                 t.clone()
             } else {
-                loop {
-                    let input = InteractiveMenu::read_input("请输入目标地址 (host:port): ");
-                    println!();
-                    if !input.is_empty() {
-                        break input;
-                    }
-                    print_error("目标不能为空，请重新输入");
-                }
+                InteractiveMenu::read_input_required(
+                    "请输入目标地址 (host:port): ",
+                    "目标不能为空，请重新输入",
+                )
             };
-
             config = config.with_remote_target(target);
         }
         TunnelType::Chain => {
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            println!("  [3/5] 跳板和目标");
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            println!();
-
+            InteractiveMenu::print_step(3, 5, "跳板和目标");
             let hops = if let Some(h) = &initial_hop {
                 println!("已指定跳板: {}", h.join(", "));
                 println!();
@@ -268,8 +234,7 @@ fn run_interactive_tunnel(
             } else {
                 let mut hops = Vec::new();
                 loop {
-                    let input =
-                        InteractiveMenu::read_input("请输入跳板地址 (host:port)，留空结束: ");
+                    let input = InteractiveMenu::read_input("请输入跳板地址 (host:port)，留空结束: ");
                     if input.is_empty() {
                         break;
                     }
@@ -284,48 +249,55 @@ fn run_interactive_tunnel(
                 println!();
                 t.clone()
             } else {
-                InteractiveMenu::read_input("请输入最终目标地址 (host:port): ")
+                InteractiveMenu::read_input_required(
+                    "请输入最终目标地址 (host:port): ",
+                    "最终目标不能为空",
+                )
             };
 
             config = config.with_hops(hops).with_remote_target(target);
             println!();
         }
         TunnelType::Socks5 => {
-            // SOCKS5 不需要预先指定目标
+            println!("提示: SOCKS5 代理监听后按需连接，无需预先指定目标");
+            println!();
+
+            let auth_enabled = InteractiveMenu::read_input("是否启用 SOCKS5 认证? [y/N]: ");
+            if auth_enabled.to_lowercase() == "y" {
+                let auth_user = InteractiveMenu::read_input_required(
+                    "SOCKS5 用户名: ",
+                    "用户名不能为空",
+                );
+                let auth_pass = InteractiveMenu::read_input_required(
+                    "SOCKS5 密码: ",
+                    "密码不能为空",
+                );
+                config = config.with_socks5_auth(auth_user, auth_pass);
+                print_success("已设置 SOCKS5 认证");
+            }
         }
     }
 
     // 步骤 4: 高级选项
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [4/5] 高级选项");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    InteractiveMenu::print_step(4, 5, "高级选项");
 
     let max_connections = if initial_max_connections == 100 {
         let input = InteractiveMenu::read_input("最大并发连接 (默认: 100): ");
-        println!();
-        if input.is_empty() {
-            100
-        } else {
-            input.parse::<usize>().unwrap_or(100)
-        }
+        let val = input.parse::<usize>().unwrap_or(100);
+        print_success(&format!("已设置最大连接: {}", val));
+        val
     } else {
         println!("已指定最大连接: {}", initial_max_connections);
-        println!();
         initial_max_connections
     };
 
     let timeout = if initial_timeout == 30 {
         let input = InteractiveMenu::read_input("超时时间/秒 (默认: 30): ");
-        println!();
-        if input.is_empty() {
-            30
-        } else {
-            input.parse::<u64>().unwrap_or(30)
-        }
+        let val = input.parse::<u64>().unwrap_or(30);
+        print_success(&format!("已设置超时: {} 秒", val));
+        val
     } else {
         println!("已指定超时: {} 秒", initial_timeout);
-        println!();
         initial_timeout
     };
 
@@ -334,10 +306,7 @@ fn run_interactive_tunnel(
         .with_timeout(timeout);
 
     // 步骤 5: 确认
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [5/5] 配置确认");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    InteractiveMenu::print_step(5, 5, "配置确认");
     println!(
         "  隧道类型:     {}",
         format_tunnel_type(tunnel_type_enum.as_str())
@@ -353,8 +322,7 @@ fn run_interactive_tunnel(
     println!("  超时:         {} 秒", timeout);
     println!();
 
-    let confirm = InteractiveMenu::read_input("确认启动隧道? [Y/n]: ");
-    if confirm.to_lowercase() == "n" {
+    if !InteractiveMenu::confirm("确认启动隧道? [Y/n]: ") {
         print_info("已取消隧道");
         return Ok(());
     }
@@ -363,7 +331,6 @@ fn run_interactive_tunnel(
     print_info("启动隧道...");
     println!();
 
-    // 启动隧道
     let manager = TunnelManager::new();
     let rt = tokio::runtime::Runtime::new()?;
 

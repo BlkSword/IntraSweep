@@ -11,7 +11,7 @@ pub mod tunnel;
 pub mod vuln;
 
 use crate::core::Result;
-use crate::output::color::{print_error, Color};
+use crate::output::color::{print_error, print_info, print_success, Color};
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -33,7 +33,18 @@ impl InteractiveMenu {
         input.trim().to_string()
     }
 
-    /// 读取数字输入
+    /// 读取用户输入，空输入时重试
+    pub fn read_input_required(prompt: &str, error_msg: &str) -> String {
+        loop {
+            let input = Self::read_input(prompt);
+            if !input.is_empty() {
+                return input;
+            }
+            print_error(error_msg);
+        }
+    }
+
+    /// 读取数字输入（必选，无默认值）
     pub fn read_number(prompt: &str, min: usize, max: usize) -> usize {
         loop {
             let input = Self::read_input(prompt);
@@ -44,6 +55,51 @@ impl InteractiveMenu {
                 }
             }
         }
+    }
+
+    /// 读取数字输入（可选，支持按回车取默认值）
+    pub fn read_number_opt(prompt: &str, min: usize, max: usize, default: usize) -> usize {
+        loop {
+            let input = Self::read_input(prompt);
+            if input.is_empty() {
+                return default;
+            }
+            match input.parse::<usize>() {
+                Ok(n) if n >= min && n <= max => return n,
+                _ => {
+                    print_error(&format!("请输入 {} 到 {} 之间的数字，或按回车使用默认值 {}", min, max, default));
+                }
+            }
+        }
+    }
+
+    /// 读取端口号（支持按回车取默认端口）
+    pub fn read_port(prompt: &str, default: u16) -> u16 {
+        let input = Self::read_input(prompt);
+        if input.is_empty() {
+            return default;
+        }
+        match input.parse::<u16>() {
+            Ok(p) => p,
+            Err(_) => {
+                print_error(&format!("无效端口号，使用默认端口: {}", default));
+                default
+            }
+        }
+    }
+
+    /// 打印步骤标题
+    pub fn print_step(step: usize, total: usize, title: &str) {
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("  [{}/{}] {}", step, total, title);
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!();
+    }
+
+    /// 确认操作（默认 Y）
+    pub fn confirm(prompt: &str) -> bool {
+        let input = Self::read_input(prompt);
+        !input.eq_ignore_ascii_case("n")
     }
 }
 
@@ -238,13 +294,13 @@ pub enum Commands {
     /// AD 域深度枚举 (缩写: ad)
     #[clap(about = "AD 域深度枚举 (缩写: ad)")]
     Ad {
-        /// 域控 IP 地址
+        /// 域控 IP 地址 - 可选，不填则进入交互式模式
         #[arg(short, long)]
-        dc: String,
+        dc: Option<String>,
 
-        /// 域名 (例: corp.local)
+        /// 域名 (例: corp.local) - 可选
         #[arg(short, long)]
-        domain: String,
+        domain: Option<String>,
 
         /// 用户名
         #[arg(short, long)]

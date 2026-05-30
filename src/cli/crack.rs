@@ -51,9 +51,9 @@ pub fn run_crack_cmd(
 fn run_interactive_crack(
     initial_port: Option<u16>,
     initial_service: Option<String>,
-    _initial_usernames: Option<String>,
+    initial_usernames: Option<String>,
     initial_password_file: Option<String>,
-    _initial_username_file: Option<String>,
+    initial_username_file: Option<String>,
     initial_concurrency: usize,
     initial_timeout: u64,
     initial_delay: Option<u64>,
@@ -64,40 +64,23 @@ fn run_interactive_crack(
     println!();
 
     // 步骤 1: 目标主机
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [1/7] 目标主机");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    InteractiveMenu::print_step(1, 8, "目标主机");
     println!("输入格式示例:");
     println!("  IP地址:       192.168.1.1");
     println!("  域名:         example.com");
     println!();
 
-    let target = loop {
-        let input = InteractiveMenu::read_input("请输入目标主机: ");
-        if !input.is_empty() {
-            break input;
-        }
-        print_error("目标不能为空，请重新输入");
-    };
-    println!();
+    let target = InteractiveMenu::read_input_required("请输入目标主机: ", "目标不能为空，请重新输入");
     print_success(&format!("已设置目标: {}", target));
-    println!();
 
     // 步骤 2: 服务类型
     let service = if let Some(s) = &initial_service {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("  [2/7] 服务类型");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!();
+        InteractiveMenu::print_step(2, 8, "服务类型");
         println!("已指定: {}", s);
         println!();
         s.clone()
     } else {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("  [2/7] 服务类型");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!();
+        InteractiveMenu::print_step(2, 8, "服务类型");
         println!("  1. SSH       - SSH 爆破 (默认端口: 22)");
         println!("  2. RDP       - RDP 爆破 (默认端口: 3389)");
         println!("  3. Redis     - Redis 爆破 (默认端口: 6379)");
@@ -108,7 +91,7 @@ fn run_interactive_crack(
         println!("  8. WinRM     - WinRM 爆破 (默认端口: 5985)");
         println!();
 
-        let choice = InteractiveMenu::read_number("请选择服务类型 [1-8]: ", 1, 8);
+        let choice = InteractiveMenu::read_number_opt("请选择服务类型 [1-8, 默认 1]: ", 1, 8, 1);
         let service = match choice {
             1 => "ssh".to_string(),
             2 => "rdp".to_string(),
@@ -120,9 +103,7 @@ fn run_interactive_crack(
             8 => "winrm".to_string(),
             _ => "ssh".to_string(),
         };
-        println!();
         print_success(&format!("已选择: {}", service.to_uppercase()));
-        println!();
         service
     };
 
@@ -140,101 +121,70 @@ fn run_interactive_crack(
     };
 
     // 步骤 3: 端口
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [3/7] 端口");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
-
+    InteractiveMenu::print_step(3, 8, "端口");
     let default_port = service_type.default_port();
-    println!("默认端口: {}", default_port);
-    println!();
 
     let port = if let Some(p) = initial_port {
         println!("已指定端口: {}", p);
         println!();
         p
     } else {
-        let port_input =
-            InteractiveMenu::read_input(&format!("按 Enter 使用默认端口或输入自定义端口: "));
-        println!();
-        if port_input.is_empty() {
-            print_success(&format!("使用默认端口: {}", default_port));
-            println!();
-            default_port
-        } else {
-            let p = port_input.parse::<u16>().unwrap_or(default_port);
-            print_success(&format!("已设置端口: {}", p));
-            println!();
-            p
-        }
+        let p = InteractiveMenu::read_port(
+            &format!("请输入端口 (默认: {}): ", default_port),
+            default_port,
+        );
+        print_success(&format!("已设置端口: {}", p));
+        p
     };
 
     // 步骤 4: 用户名配置
-    let usernames = if service_type.requires_username() {
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("  [4/7] 用户名配置");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!();
+    let (usernames, username_file) = if service_type.requires_username() {
+        InteractiveMenu::print_step(4, 8, "用户名配置");
         println!("  1. 手动输入用户名 (逗号分隔)");
         println!("  2. 从文件加载用户名字典");
         println!("  3. 使用默认用户名列表");
         println!();
 
-        let choice = InteractiveMenu::read_number("请选择 [1-3]: ", 1, 3);
-        println!();
+        let choice = InteractiveMenu::read_number_opt("请选择 [1-3, 默认 3]: ", 1, 3, 3);
 
         match choice {
             1 => {
                 let input = InteractiveMenu::read_input("请输入用户名 (多个用逗号分隔): ");
-                println!();
                 print_success("已设置用户名");
-                println!();
-                Some(input)
+                (Some(input), None)
             }
             2 => {
-                loop {
+                let file = loop {
                     let file = InteractiveMenu::read_input("请输入用户名字典文件路径: ");
-                    println!();
-
-                    // 验证字典文件
                     match DictManager::validate_dict_file(&file) {
                         Ok(count) => {
                             print_success(&format!("字典文件验证通过 (包含 {} 个用户名)", count));
-                            println!();
-                            break Some(format!("@{}", file));
+                            break Some(file);
                         }
                         Err(e) => {
                             print_error(&format!("字典文件验证失败: {}", e));
-                            println!();
                             let retry = InteractiveMenu::read_input("是否重新输入? [Y/n]: ");
                             if retry.to_lowercase() == "n" {
-                                println!();
                                 print_info("将使用默认用户名列表");
-                                println!();
                                 break None;
                             }
-                            println!();
                         }
                     }
-                }
+                };
+                (None, file)
             }
             3 => {
-                println!();
                 print_info("将使用默认用户名列表");
-                println!();
-                None
+                (None, None)
             }
-            _ => None,
+            _ => (None, None),
         }
     } else {
-        None
+        (None, None)
     };
 
     // 步骤 5: 密码字典
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [5/7] 密码字典");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    InteractiveMenu::print_step(5, 8, "密码字典");
 
     let password_file = if initial_password_file.is_some() {
         println!("已指定密码字典文件");
@@ -245,8 +195,7 @@ fn run_interactive_crack(
         println!("  2. 使用默认密码字典");
         println!();
 
-        let choice = InteractiveMenu::read_number("请选择 [1-2]: ", 1, 2);
-        println!();
+        let choice = InteractiveMenu::read_number_opt("请选择 [1-2, 默认 2]: ", 1, 2, 2);
 
         match choice {
             1 => {
@@ -287,73 +236,68 @@ fn run_interactive_crack(
     };
 
     // 步骤 6: 性能配置
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [6/7] 性能配置");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    InteractiveMenu::print_step(6, 8, "性能配置");
 
     let concurrency = if initial_concurrency == 10 {
-        let input = InteractiveMenu::read_input(&format!("并发数 (默认: 10): "));
-        println!();
-        if input.is_empty() {
-            10
-        } else {
-            let c = input.parse::<usize>().unwrap_or(10);
-            print_success(&format!("已设置并发数: {}", c));
-            println!();
-            c
-        }
+        let input = InteractiveMenu::read_input("并发数 (默认: 10): ");
+        let c = if input.is_empty() { 10 } else { input.parse::<usize>().unwrap_or(10) };
+        print_success(&format!("已设置并发数: {}", c));
+        c
     } else {
         println!("已指定并发数: {}", initial_concurrency);
-        println!();
         initial_concurrency
     };
 
     let timeout = if initial_timeout == 5 {
-        let input = InteractiveMenu::read_input(&format!("超时时间/秒 (默认: 5): "));
-        println!();
-        if input.is_empty() {
-            5
-        } else {
-            let t = input.parse::<u64>().unwrap_or(5);
-            print_success(&format!("已设置超时: {} 秒", t));
-            println!();
-            t
-        }
+        let input = InteractiveMenu::read_input("超时时间/秒 (默认: 5): ");
+        let t = if input.is_empty() { 5 } else { input.parse::<u64>().unwrap_or(5) };
+        print_success(&format!("已设置超时: {} 秒", t));
+        t
     } else {
         println!("已指定超时: {} 秒", initial_timeout);
-        println!();
         initial_timeout
     };
 
     // 步骤 7: 高级选项
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("  [7/7] 高级选项");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!();
+    InteractiveMenu::print_step(7, 8, "高级选项");
 
     let delay = if initial_delay.is_some() {
         println!("已指定延迟");
-        println!();
         initial_delay
     } else {
         let input = InteractiveMenu::read_input("设置延迟/毫秒，可选 (按 Enter 跳过): ");
-        println!();
         if input.is_empty() {
             print_info("未设置延迟");
-            println!();
             None
         } else {
-            let d = input.parse::<u64>().ok();
-            if let Some(delay_val) = d {
-                print_success(&format!("已设置延迟: {} 毫秒", delay_val));
-            } else {
-                print_info("输入无效，未设置延迟");
+            match input.parse::<u64>() {
+                Ok(d) => {
+                    print_success(&format!("已设置延迟: {} 毫秒", d));
+                    Some(d)
+                }
+                Err(_) => {
+                    print_error("输入无效，未设置延迟");
+                    None
+                }
             }
-            println!();
-            d
         }
     };
+
+    // 步骤 8: 确认配置
+    InteractiveMenu::print_step(8, 8, "确认配置");
+    println!("  目标主机:     {}", target);
+    println!("  服务类型:     {} (端口: {})", service.to_uppercase(), port);
+    println!("  并发数:       {}", concurrency);
+    println!("  超时:         {} 秒", timeout);
+    if let Some(ref d) = delay {
+        println!("  延迟:         {} 毫秒", d);
+    }
+    println!();
+
+    if !InteractiveMenu::confirm("确认开始爆破? [Y/n]: ") {
+        print_info("已取消爆破");
+        return Ok(());
+    }
 
     // 调用 run_crack 执行爆破
     run_crack(
@@ -362,7 +306,7 @@ fn run_interactive_crack(
         Some(service),
         usernames,
         password_file,
-        None, // username_file 从 usernames 参数解析
+        username_file,
         concurrency,
         timeout,
         delay,
@@ -383,8 +327,7 @@ fn run_crack(
 ) -> Result<()> {
     use std::time::Duration;
 
-    // 显示 Banner
-    print_banner();
+    // 显示摘要
     println!();
 
     // 解析服务类型
@@ -529,15 +472,6 @@ fn run_crack(
     if let Some(d) = config.delay_ms {
         println!("  延迟:         {} 毫秒", d);
     }
-    println!();
-
-    // 确认
-    let confirm = InteractiveMenu::read_input("确认开始爆破? [Y/n]: ");
-    if confirm.to_lowercase() == "n" {
-        print_info("已取消爆破");
-        return Ok(());
-    }
-
     println!();
 
     // 执行爆破
