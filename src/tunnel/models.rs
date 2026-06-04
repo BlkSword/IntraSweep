@@ -4,6 +4,7 @@
 
 use std::net::SocketAddr;
 use std::time::Duration;
+use tracing;
 
 /// 连接信息
 #[derive(Debug, Clone)]
@@ -257,14 +258,14 @@ impl TunnelEventHandler for LogEventHandler {
                 local_addr,
                 remote_addr,
             } => {
-                println!("[连接] {} <- {}", local_addr, remote_addr);
+                tracing::info!("[连接] {} <- {}", local_addr, remote_addr);
             }
             TunnelEvent::Disconnected { id } => {
-                println!("[断开] 连接 {} 已关闭", id);
+                tracing::info!("[断开] 连接 {} 已关闭", id);
             }
             TunnelEvent::DataTransferred { id, sent, received } => {
                 if sent > 0 || received > 0 {
-                    println!(
+                    tracing::debug!(
                         "[传输] {} -> {} bytes, <- {} bytes",
                         id,
                         ConnectionInfo::format_bytes(sent),
@@ -273,13 +274,13 @@ impl TunnelEventHandler for LogEventHandler {
                 }
             }
             TunnelEvent::Error { message } => {
-                eprintln!("[错误] {}", message);
+                tracing::error!("[错误] {}", message);
             }
             TunnelEvent::Started => {
-                println!("[隧道] 已启动");
+                tracing::info!("[隧道] 已启动");
             }
             TunnelEvent::Stopped => {
-                println!("[隧道] 已停止");
+                tracing::info!("[隧道] 已停止");
             }
         }
     }

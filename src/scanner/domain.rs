@@ -49,11 +49,11 @@ impl DomainScanner {
         // 尝试检测当前域环境
         if let Ok(domain_info) = self.detect_domain() {
             let domain_name = domain_info.name.clone();
-            result.domain_name = Some(domain_name.clone());
+            result.domain_name = if domain_name.is_empty() { None } else { Some(domain_name.clone()) };
             result.is_joined = domain_info.is_joined;
             result.current_computer = domain_info.computer_name;
             result.current_user = domain_info.username;
-            self.domain_name = Some(domain_name.clone());
+            self.domain_name = if domain_name.is_empty() { None } else { Some(domain_name.clone()) };
 
             // 尝试发现域控制器
             if let Ok(dc) = self.find_domain_controller(&domain_name) {

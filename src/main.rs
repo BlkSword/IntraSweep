@@ -25,6 +25,20 @@ fn main() {
         log_file: cli.log_file.clone(),
     });
 
+    // 加载配置文件
+    let app_config = cli.config.as_ref().and_then(|path| {
+        match core::config::load_config(path) {
+            Ok(cfg) => {
+                tracing::info!("已加载配置文件: {}", path.display());
+                Some(cfg)
+            }
+            Err(e) => {
+                tracing::warn!("加载配置文件失败: {}", e);
+                None
+            }
+        }
+    });
+
     tracing::debug!("启动 IntraSweep");
 
     let result = match cli.command {
@@ -46,6 +60,7 @@ fn main() {
         Commands::Tunnel { tunnel_type, target, local_port, remote_port,
                            hop, socks5_username, socks5_password,
                            max_connections, timeout } => {
+            let _cfg = &app_config;
             cli::tunnel::run_tunnel_cmd(tunnel_type, target, local_port,
                                        remote_port, hop, socks5_username,
                                        socks5_password, max_connections, timeout)

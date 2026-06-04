@@ -80,7 +80,7 @@ fn run_tunnel(
 
     let local_addr_str = format!("127.0.0.1:{}", local_port);
     let local_addr = local_addr_str.parse()
-        .map_err(|_| FlyWheelError::Other {
+        .map_err(|_| FlyWheelError::Config {
             message: format!("无效的本地地址: {}", local_addr_str),
         })?;
 
@@ -112,8 +112,7 @@ fn run_tunnel(
 
     // 验证配置
     config
-        .validate()
-        .map_err(|e| FlyWheelError::Other { message: e })?;
+        .validate()?;
 
     // 创建隧道管理器
     let manager = TunnelManager::new();

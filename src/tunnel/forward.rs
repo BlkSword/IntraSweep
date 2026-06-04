@@ -8,6 +8,7 @@ use crate::tunnel::models::{ConnectionInfo, TunnelEvent, TunnelEventHandler, Tun
 use crate::tunnel::relay;
 use crate::tunnel::shutdown::Shutdown;
 use std::sync::Arc;
+use tracing;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 use tokio::time::{timeout, Duration};
@@ -35,16 +36,15 @@ impl ForwardTunnel {
     /// 启动正向隧道
     pub async fn start(&self) -> Result<()> {
         // 验证配置
-        self.config.validate()
-            .map_err(|e| FlyWheelError::Other { message: e })?;
+        self.config.validate()?;
 
         let target = self.config.remote_target.clone()
-            .ok_or_else(|| FlyWheelError::Other {
+            .ok_or_else(|| FlyWheelError::Config {
                 message: "正向隧道需要指定远程目标".to_string(),
             })?;
 
         let listener = TcpListener::bind(&self.config.local_addr).await
-            .map_err(|e| FlyWheelError::Other {
+            .map_err(|e| FlyWheelError::Network {
                 message: format!("绑定端口 {} 失败: {}", self.config.local_addr, e),
             })?;
 
@@ -74,7 +74,7 @@ impl ForwardTunnel {
                     let permit = match semaphore.clone().try_acquire_owned() {
                         Ok(p) => p,
                         Err(_) => {
-                            eprintln!("[警告] 连接数已达上限，拒绝: {}", addr);
+                            tracing::warn!("连接数已达上限，拒绝: {}", addr);
                             drop(client);
                             continue;
                         }
@@ -163,16 +163,15 @@ impl ForwardTunnel {
 
     /// 启动正向隧道（支持优雅关闭）
     pub async fn start_with_shutdown(&self, shutdown: &Shutdown) -> Result<()> {
-        self.config.validate()
-            .map_err(|e| FlyWheelError::Other { message: e })?;
+        self.config.validate()?;
 
         let target = self.config.remote_target.clone()
-            .ok_or_else(|| FlyWheelError::Other {
+            .ok_or_else(|| FlyWheelError::Config {
                 message: "正向隧道需要指定远程目标".to_string(),
             })?;
 
         let listener = TcpListener::bind(&self.config.local_addr).await
-            .map_err(|e| FlyWheelError::Other {
+            .map_err(|e| FlyWheelError::Network {
                 message: format!("绑定端口 {} 失败: {}", self.config.local_addr, e),
             })?;
 
@@ -198,6 +197,13 @@ impl ForwardTunnel {
         let semaphore = Arc::new(Semaphore::new(self.config.max_connections));
         let mut counter = 0u64;
 
+        // 初始化加密层（如果配置了密钥）
+        let crypto = self.config.encryption_key.as_ref().map(|k| {
+            std::sync::Arc::new(crate::tunnel::crypto::CryptoLayer::new(
+                &crate::tunnel::crypto::derive_key(k),
+            ))
+        });
+
         loop {
             tokio::select! {
                 result = listener.accept() => {
@@ -206,7 +212,7 @@ impl ForwardTunnel {
                             let permit = match semaphore.clone().try_acquire_owned() {
                                 Ok(p) => p,
                                 Err(_) => {
-                                    eprintln!("[警告] 连接数已达上限，拒绝: {}", addr);
+                                    tracing::warn!("连接数已达上限，拒绝: {}", addr);
                                     drop(client);
                                     continue;
                                 }
@@ -236,12 +242,20 @@ impl ForwardTunnel {
                             let timeout_dur = Duration::from_secs(self.config.timeout_secs);
                             let event_handler = self.event_handler.clone();
                             let status = self.status.clone();
+                            let crypto = crypto.clone();
 
                             tokio::spawn(async move {
                                 let result = timeout(timeout_dur, TcpStream::connect(&target)).await;
                                 match result {
                                     Ok(Ok(target_stream)) => {
-                                        let stats = relay::relay(client, target_stream).await;
+                                        let stats = if let Some(c) = &crypto {
+                                            let enc_client = crate::tunnel::crypto::EncryptedStream::new(
+                                                client, c.clone(),
+                                            );
+                                            relay::relay(enc_client, target_stream).await
+                                        } else {
+                                            relay::relay(client, target_stream).await
+                                        };
                                         {
                                             let mut st = status.write().await;
                                             st.update_connection(&conn_id, stats.sent, stats.received);
@@ -293,17 +307,4 @@ impl ForwardTunnel {
         Ok(())
     }
 
-    /// 获取隧道状态
-    #[allow(dead_code)]
-    pub async fn get_status(&self) -> TunnelStatus {
-        self.status.read().await.clone()
-    }
-
-    /// 停止隧道
-    #[allow(dead_code)]
-    pub async fn stop(&self) {
-        let mut status = self.status.write().await;
-        status.stop();
-        self.event_handler.on_event(TunnelEvent::Stopped);
-    }
 }

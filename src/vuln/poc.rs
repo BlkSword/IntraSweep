@@ -8,16 +8,16 @@ use std::collections::HashMap;
 /// 漏洞严重性级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum Severity {
-    #[serde(rename = "critical")]
-    Critical,
-    #[serde(rename = "high")]
-    High,
-    #[serde(rename = "medium")]
-    Medium,
-    #[serde(rename = "low")]
-    Low,
     #[serde(rename = "info")]
     Info,
+    #[serde(rename = "low")]
+    Low,
+    #[serde(rename = "medium")]
+    Medium,
+    #[serde(rename = "high")]
+    High,
+    #[serde(rename = "critical")]
+    Critical,
 }
 
 impl Severity {

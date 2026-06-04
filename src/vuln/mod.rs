@@ -334,10 +334,27 @@ pub fn expand_targets(targets: &[String]) -> Vec<String> {
         if target.contains('-') && !target.contains(':') {
             let parts: Vec<&str> = target.split('-').collect();
             if parts.len() == 2 {
+                // Try parsing as IP range like "192.168.1.1-192.168.1.3"
+                if let (Ok(start_ip), Ok(end_ip)) = (
+                    parts[0].parse::<std::net::Ipv4Addr>(),
+                    parts[1].parse::<std::net::Ipv4Addr>(),
+                ) {
+                    let start_octets = start_ip.octets();
+                    let end_octets = end_ip.octets();
+                    if start_octets[0..3] == end_octets[0..3]
+                        && start_octets[3] <= end_octets[3]
+                    {
+                        for last in start_octets[3]..=end_octets[3] {
+                            let mut octets = start_octets;
+                            octets[3] = last;
+                            expanded.push(std::net::Ipv4Addr::from(octets).to_string());
+                        }
+                        continue;
+                    }
+                }
+                // Fallback: try parsing as pure integer range
                 if let (Ok(start), Ok(end)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
-                    let start_num = u32::from(start);
-                    let end_num = u32::from(end);
-                    for num in start_num..=end_num {
+                    for num in start..=end {
                         expanded.push(std::net::Ipv4Addr::from(num).to_string());
                     }
                     continue;

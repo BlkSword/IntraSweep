@@ -4,6 +4,7 @@
 //! 支持 Ctrl+C 信号监听。
 
 use tokio_util::sync::CancellationToken;
+use tracing;
 
 /// 优雅关闭信号
 ///
@@ -31,8 +32,7 @@ impl Shutdown {
             tokio::signal::ctrl_c()
                 .await
                 .expect("注册 Ctrl+C handler 失败");
-            eprintln!();
-            eprintln!("收到中断信号，正在关闭隧道...");
+            tracing::info!("收到中断信号，正在关闭隧道...");
             token.cancel();
         });
 

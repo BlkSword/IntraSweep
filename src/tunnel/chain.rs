@@ -8,6 +8,7 @@ use crate::tunnel::models::{ConnectionInfo, TunnelEvent, TunnelEventHandler, Tun
 use crate::tunnel::relay;
 use crate::tunnel::shutdown::Shutdown;
 use std::sync::Arc;
+use tracing;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
@@ -36,11 +37,10 @@ impl ChainTunnel {
     /// 启动链式隧道
     pub async fn start(&self) -> Result<()> {
         // 验证配置
-        self.config.validate()
-            .map_err(|e| FlyWheelError::Other { message: e })?;
+        self.config.validate()?;
 
         let target = self.config.remote_target.clone()
-            .ok_or_else(|| FlyWheelError::Other {
+            .ok_or_else(|| FlyWheelError::Config {
                 message: "链式隧道需要指定最终目标".to_string(),
             })?;
 
@@ -65,7 +65,7 @@ impl ChainTunnel {
         println!();
 
         let listener = TcpListener::bind(&self.config.local_addr).await
-            .map_err(|e| FlyWheelError::Other {
+            .map_err(|e| FlyWheelError::Network {
                 message: format!("绑定端口 {} 失败: {}", self.config.local_addr, e),
             })?;
 
@@ -79,7 +79,7 @@ impl ChainTunnel {
                     let permit = match semaphore.clone().try_acquire_owned() {
                         Ok(p) => p,
                         Err(_) => {
-                            eprintln!("[警告] 连接数已达上限，拒绝: {}", addr);
+                            tracing::warn!("连接数已达上限，拒绝: {}", addr);
                             drop(client);
                             continue;
                         }
@@ -168,10 +168,10 @@ impl ChainTunnel {
             // 没有跳板，直接连接目标
             return timeout(timeout_dur, TcpStream::connect(target))
                 .await
-                .map_err(|_| FlyWheelError::Other {
+                .map_err(|_| FlyWheelError::Network {
                     message: format!("连接目标 {} 超时", target),
                 })?
-                .map_err(|e| FlyWheelError::Other {
+                .map_err(|e| FlyWheelError::Network {
                     message: format!("连接目标 {} 失败: {}", target, e),
                 });
         }
@@ -179,10 +179,10 @@ impl ChainTunnel {
         // 逐个连接跳板
         let mut current_stream = timeout(timeout_dur, TcpStream::connect(&hops[0]))
             .await
-            .map_err(|_| FlyWheelError::Other {
+            .map_err(|_| FlyWheelError::Network {
                 message: format!("连接跳板 1 ({}) 超时", hops[0]),
             })?
-            .map_err(|e| FlyWheelError::Other {
+            .map_err(|e| FlyWheelError::Network {
                 message: format!("连接跳板 1 ({}) 失败: {}", hops[0], e),
             })?;
 
@@ -193,14 +193,14 @@ impl ChainTunnel {
             // 发送连接下一个跳板的指令
             let addr_parts: Vec<&str> = hop.split(':').collect();
             if addr_parts.len() != 2 {
-                return Err(FlyWheelError::Other {
+                return Err(FlyWheelError::Config {
                     message: format!("无效的跳板地址格式: {}", hop),
                 });
             }
 
             let host = addr_parts[0];
             let port: u16 = addr_parts[1].parse()
-                .map_err(|_| FlyWheelError::Other {
+                .map_err(|_| FlyWheelError::Config {
                     message: format!("无效的端口号: {}", addr_parts[1]),
                 })?;
 
@@ -211,7 +211,7 @@ impl ChainTunnel {
             packet[2 + host.len()..4 + host.len()].copy_from_slice(&port.to_be_bytes());
 
             if let Err(e) = current_stream.write_all(&packet).await {
-                return Err(FlyWheelError::Other {
+                return Err(FlyWheelError::Network {
                     message: format!("发送连接指令到跳板 {} 失败: {}", i + 2, e),
                 });
             }
@@ -219,13 +219,13 @@ impl ChainTunnel {
             // 读取响应
             let mut resp = [0u8; 1];
             if let Err(e) = current_stream.read_exact(&mut resp).await {
-                return Err(FlyWheelError::Other {
+                return Err(FlyWheelError::Network {
                     message: format!("读取跳板 {} 响应失败: {}", i + 2, e),
                 });
             }
 
             if resp[0] != 0x00 {
-                return Err(FlyWheelError::Other {
+                return Err(FlyWheelError::Protocol {
                     message: format!("跳板 {} 返回错误: 0x{:02x}", i + 2, resp[0]),
                 });
             }
@@ -236,14 +236,14 @@ impl ChainTunnel {
         // 连接到最终目标
         let addr_parts: Vec<&str> = target.split(':').collect();
         if addr_parts.len() != 2 {
-            return Err(FlyWheelError::Other {
+            return Err(FlyWheelError::Config {
                 message: format!("无效的目标地址格式: {}", target),
             });
         }
 
         let host = addr_parts[0];
         let port: u16 = addr_parts[1].parse()
-            .map_err(|_| FlyWheelError::Other {
+            .map_err(|_| FlyWheelError::Config {
                 message: format!("无效的端口号: {}", addr_parts[1]),
             })?;
 
@@ -254,7 +254,7 @@ impl ChainTunnel {
         packet[2 + host.len()..4 + host.len()].copy_from_slice(&port.to_be_bytes());
 
         if let Err(e) = current_stream.write_all(&packet).await {
-            return Err(FlyWheelError::Other {
+            return Err(FlyWheelError::Network {
                 message: format!("发送连接目标指令失败: {}", e),
             });
         }
@@ -262,13 +262,13 @@ impl ChainTunnel {
         // 读取响应
         let mut resp = [0u8; 1];
         if let Err(e) = current_stream.read_exact(&mut resp).await {
-            return Err(FlyWheelError::Other {
+            return Err(FlyWheelError::Network {
                 message: format!("读取连接目标响应失败: {}", e),
             });
         }
 
         if resp[0] != 0x00 {
-            return Err(FlyWheelError::Other {
+            return Err(FlyWheelError::Protocol {
                 message: format!("连接目标失败: 0x{:02x}", resp[0]),
             });
         }
@@ -280,11 +280,10 @@ impl ChainTunnel {
 
     /// 启动链式隧道（支持优雅关闭）
     pub async fn start_with_shutdown(&self, shutdown: &Shutdown) -> Result<()> {
-        self.config.validate()
-            .map_err(|e| FlyWheelError::Other { message: e })?;
+        self.config.validate()?;
 
         let target = self.config.remote_target.clone()
-            .ok_or_else(|| FlyWheelError::Other {
+            .ok_or_else(|| FlyWheelError::Config {
                 message: "链式隧道需要指定最终目标".to_string(),
             })?;
 
@@ -309,7 +308,7 @@ impl ChainTunnel {
         println!();
 
         let listener = TcpListener::bind(&self.config.local_addr).await
-            .map_err(|e| FlyWheelError::Other {
+            .map_err(|e| FlyWheelError::Network {
                 message: format!("绑定端口 {} 失败: {}", self.config.local_addr, e),
             })?;
 
@@ -324,7 +323,7 @@ impl ChainTunnel {
                             let permit = match semaphore.clone().try_acquire_owned() {
                                 Ok(p) => p,
                                 Err(_) => {
-                                    eprintln!("[警告] 连接数已达上限，拒绝: {}", addr);
+                                    tracing::warn!("连接数已达上限，拒绝: {}", addr);
                                     drop(client);
                                     continue;
                                 }
@@ -395,19 +394,6 @@ impl ChainTunnel {
         Ok(())
     }
 
-    /// 获取隧道状态
-    #[allow(dead_code)]
-    pub async fn get_status(&self) -> TunnelStatus {
-        self.status.read().await.clone()
-    }
-
-    /// 停止隧道
-    #[allow(dead_code)]
-    pub async fn stop(&self) {
-        let mut status = self.status.write().await;
-        status.stop();
-        self.event_handler.on_event(TunnelEvent::Stopped);
-    }
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@
 
 use crate::core::Result;
 use std::collections::HashMap;
+use tracing;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
@@ -307,7 +308,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Mux<S> {
                         }
                         Ok(None) => break,
                         Err(e) => {
-                            eprintln!("[Mux] 读取帧错误: {}", e);
+                            tracing::error!("[Mux] 读取帧错误: {}", e);
                             break;
                         }
                     }
@@ -318,7 +319,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Mux<S> {
                             if let Err(e) = Self::write_frame_raw(
                                 &mut self.stream, FrameType::Data, stream_id, &payload
                             ).await {
-                                eprintln!("[Mux] 写数据帧错误: {}", e);
+                                tracing::error!("[Mux] 写数据帧错误: {}", e);
                                 break;
                             }
                         }
@@ -336,7 +337,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Mux<S> {
                         if let Err(e) = Self::write_frame_raw(
                             &mut self.stream, FrameType::Ping, 0, &[]
                         ).await {
-                            eprintln!("[Mux] 写 Ping 错误: {}", e);
+                            tracing::error!("[Mux] 写 Ping 错误: {}", e);
                             break;
                         }
                         last_ping = tokio::time::Instant::now();

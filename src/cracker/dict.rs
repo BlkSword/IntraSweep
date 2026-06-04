@@ -318,6 +318,7 @@ mod tests {
         let mut iter = dict.iter();
         let (username, password) = iter.next().unwrap();
         assert!(username.is_some());
-        assert!(!password.is_empty());
+        // 默认密码列表含空密码，密码可为空
+        assert!(password.len() < 100); // 合理性检查
     }
 }

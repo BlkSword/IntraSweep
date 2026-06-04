@@ -297,7 +297,7 @@ fn detect_config_type(filename: &str) -> String {
         "SSH配置".to_string()
     } else if filename_lower.contains("nginx") || filename_lower.contains("apache") || filename_lower.contains("httpd") {
         "Web服务器配置".to_string()
-    } else if filename_lower.contains("mysql") || filename_lower.contains("postgresql") || filename_lower.contains("mongodb") {
+    } else if filename_lower.contains("mysql") || filename_lower.contains("my.cnf") || filename_lower.contains("postgresql") || filename_lower.contains("mongodb") {
         "数据库配置".to_string()
     } else if filename_lower.contains("docker") {
         "Docker配置".to_string()

@@ -528,17 +528,19 @@ fn md4_hash(input: &[u8]) -> [u8; 16] {
             let tmp = d; d = c; c = b; b = a; a = tmp;
         }
 
-        // Round 2
-        for i in [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15] {
-            a = a.wrapping_add(g(b, c, d)).wrapping_add(m[i]).wrapping_add(0x5A827999);
-            a = rotate_left(a, if [0, 4, 8, 12].contains(&i) { 3 } else if [1, 5, 9, 13].contains(&i) { 5 } else if [2, 6, 10, 14].contains(&i) { 9 } else { 13 });
+        // Round 2 — 按 step index 确定移位量: 0→3, 1→5, 2→9, 3→13
+        for (j, i) in [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15].iter().enumerate() {
+            let s = match j % 4 { 0 => 3, 1 => 5, 2 => 9, _ => 13 };
+            a = a.wrapping_add(g(b, c, d)).wrapping_add(m[*i]).wrapping_add(0x5A827999);
+            a = rotate_left(a, s);
             let tmp = d; d = c; c = b; b = a; a = tmp;
         }
 
-        // Round 3
-        for i in [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15] {
-            a = a.wrapping_add(h(b, c, d)).wrapping_add(m[i]).wrapping_add(0x6ED9EBA1);
-            a = rotate_left(a, if i == 0 || i == 4 || i == 8 || i == 12 { 3 } else if i == 2 || i == 6 || i == 10 || i == 14 { 9 } else { 11 });
+        // Round 3 — 按 step index 确定移位量: 0→3, 1→9, 2→11, 3→15
+        for (j, i) in [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15].iter().enumerate() {
+            let s = match j % 4 { 0 => 3, 1 => 9, 2 => 11, _ => 15 };
+            a = a.wrapping_add(h(b, c, d)).wrapping_add(m[*i]).wrapping_add(0x6ED9EBA1);
+            a = rotate_left(a, s);
             let tmp = d; d = c; c = b; b = a; a = tmp;
         }
 
@@ -605,8 +607,8 @@ mod tests {
     fn test_nt_hash_securesecret() {
         let hash = nt_hash("SecREt01");
         let expected: [u8; 16] = [
-            0xCD, 0xED, 0xBA, 0x41, 0x87, 0x0C, 0x47, 0xA7,
-            0x49, 0x2F, 0x2D, 0x1E, 0x92, 0x34, 0x4D, 0x3B,
+            0xCD, 0x06, 0xCA, 0x7C, 0x7E, 0x10, 0xC9, 0x9B,
+            0x1D, 0x33, 0xB7, 0x48, 0x5A, 0x2E, 0xD8, 0x08,
         ];
         assert_eq!(hash, expected, "\"SecREt01\" NT Hash 不匹配");
     }
@@ -624,17 +626,17 @@ mod tests {
     #[test]
     fn test_parse_type2_valid() {
         // 构造一个最小的 Type 2 消息
+        // NTLM Type2: sig(8) + type(4) + target_name_buf(8) + flags(4) + challenge(8) + reserved(8) + target_info_buf(8) = 48
         let mut msg = Vec::new();
         msg.extend_from_slice(NTLMSSP_SIGNATURE);  // 签名
         msg.extend_from_slice(&MSG_TYPE_CHALLENGE.to_le_bytes());  // 类型
-        msg.extend_from_slice(&[0u8; 4]);  // 目标名安全缓冲
+        msg.extend_from_slice(&[0u8; 8]);  // 目标名安全缓冲 (8 bytes: len+maxlen+offset)
         let mut flags = [0u8; 4];
         flags[0] = 0x01; // NTLMSSP_NEGOTIATE_UNICODE
-        msg.extend_from_slice(&flags);  // 标志
-        msg.extend_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]); // 挑战
-        msg.extend_from_slice(&[0u8; 8]);  // 保留
-        msg.extend_from_slice(&[0u8; 8]);  // 目标信息安全缓冲 (空)
-        msg.extend_from_slice(&[0u8; 8]);  // 版本等
+        msg.extend_from_slice(&flags);  // 标志 (offset 20)
+        msg.extend_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]); // 挑战 (offset 24)
+        msg.extend_from_slice(&[0u8; 8]);  // 保留 (offset 32)
+        msg.extend_from_slice(&[0u8; 8]);  // 目标信息安全缓冲 (空, offset 40)
 
         let result = parse_type2(&msg).unwrap();
         assert_eq!(result.server_challenge, [1, 2, 3, 4, 5, 6, 7, 8]);

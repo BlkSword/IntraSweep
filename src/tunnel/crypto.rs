@@ -12,6 +12,9 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
+/// 最大帧载荷（1 MB）
+const MAX_FRAME: usize = 1024 * 1024;
+
 /// 加密层 — 持有 XChaCha20-Poly1305 AEAD 密码实例
 pub struct CryptoLayer {
     cipher: XChaCha20Poly1305,
@@ -46,7 +49,7 @@ impl CryptoLayer {
         Ok(frame)
     }
 
-    /// 解密帧，输入不含 4 字节长度前缀（长度已由调用方剥离）
+    /// 解密帧，输入不含 4 字节长度前缀
     fn decrypt_frame(&self, nonce_and_ct: &[u8]) -> io::Result<Vec<u8>> {
         if nonce_and_ct.len() < 24 + 16 {
             return Err(io::Error::new(
@@ -65,15 +68,26 @@ impl CryptoLayer {
 
 /// 加密流 — 包装异步流，透明加解密
 ///
-/// 写入：自动加密后写帧
-/// 读取：自动读帧后解密，内部缓冲处理帧边界
+/// 实现正确的 `AsyncRead` + `AsyncWrite`，可与 `tokio::io::copy`、
+/// `relay` 等标准工具组合使用。
 pub struct EncryptedStream<S> {
     inner: S,
     crypto: Arc<CryptoLayer>,
-    /// 已解密待读取的数据缓冲区
+    /// 已解密的明文缓冲区
     read_buf: Vec<u8>,
-    /// 当前读取位置
     read_pos: usize,
+    /// 帧读取状态机
+    rd_state: RdState,
+}
+
+/// 帧读取状态
+enum RdState {
+    /// 空闲，准备读下一帧
+    Idle,
+    /// 正在读 4 字节长度头
+    Header { pos: usize, hdr: [u8; 4] },
+    /// 正在读 nonce + ciphertext
+    Payload { pos: usize, len: usize, pkt: Vec<u8> },
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> EncryptedStream<S> {
@@ -83,6 +97,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> EncryptedStream<S> {
             crypto,
             read_buf: Vec::new(),
             read_pos: 0,
+            rd_state: RdState::Idle,
         }
     }
 
@@ -98,37 +113,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> EncryptedStream<S> {
         &mut self.inner
     }
 
-    /// 写入加密帧
+    /// 写入加密帧（async 方法，用于需要直接写帧的场景）
+    #[allow(dead_code)]
     pub async fn write_frame(&mut self, data: &[u8]) -> io::Result<()> {
         let frame = self.crypto.encrypt(data)?;
         self.inner.write_all(&frame).await
-    }
-
-    /// 读取一帧并解密到内部缓冲区
-    async fn read_frame(&mut self) -> io::Result<()> {
-        // 读取 4 字节长度前缀
-        let mut len_buf = [0u8; 4];
-        self.inner.read_exact(&mut len_buf).await?;
-        let payload_len = u32::from_be_bytes(len_buf) as usize;
-
-        // 限制帧大小防止内存耗尽
-        if payload_len > 1024 * 1024 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("帧长度异常: {} 字节", payload_len),
-            ));
-        }
-
-        // 读取 nonce + ciphertext
-        let mut frame_data = vec![0u8; payload_len];
-        self.inner.read_exact(&mut frame_data).await?;
-
-        // 解密
-        let plaintext = self.crypto.decrypt_frame(&frame_data)?;
-
-        self.read_buf = plaintext;
-        self.read_pos = 0;
-        Ok(())
     }
 }
 
@@ -138,23 +127,93 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for EncryptedStream<S> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        // 如果缓冲区有数据，先返回缓冲的数据
-        if self.read_pos < self.read_buf.len() {
-            let available = &self.read_buf[self.read_pos..];
-            let to_copy = available.len().min(buf.remaining());
-            buf.put_slice(&available[..to_copy]);
-            self.read_pos += to_copy;
+        let this = self.as_mut().get_mut();
+
+        // 1. 返回已缓冲的明文
+        if this.read_pos < this.read_buf.len() {
+            let available = &this.read_buf[this.read_pos..];
+            let n = available.len().min(buf.remaining());
+            buf.put_slice(&available[..n]);
+            this.read_pos += n;
             return Poll::Ready(Ok(()));
         }
+        // 缓冲区已清空
+        this.read_buf.clear();
+        this.read_pos = 0;
 
-        // 需要从流中读取新帧，但 AsyncRead 中不能直接 await
-        // 返回 Pending 并注册 waker，由上层 poll 循环驱动
-        // 使用 tokio 的 read_buf 机制：先尝试 fill 内部 buffer
-        //
-        // 策略：将 inner 的 read 委托给一个 "pending fill" 状态
-        // 实际上我们利用 tokio 的 poll 机制：
-        // 返回 WouldBlock 让上层重试，同时注册 waker
-        cx.waker().wake_by_ref();
+        // 2. 驱动帧读取状态机（最多两阶段：Header → Payload）
+        if matches!(this.rd_state, RdState::Idle) {
+            this.rd_state = RdState::Header {
+                pos: 0,
+                hdr: [0u8; 4],
+            };
+        }
+
+        if let RdState::Header { pos, hdr } = &mut this.rd_state {
+            let remaining = &mut hdr.as_mut_slice()[*pos..];
+            let mut h = ReadBuf::new(remaining);
+            match Pin::new(&mut this.inner).poll_read(cx, &mut h) {
+                Poll::Ready(Ok(())) => {
+                    let filled = h.filled().len();
+                    if filled == 0 {
+                        return Poll::Ready(Ok(()));
+                    }
+                    *pos += filled;
+                    if *pos < 4 {
+                        return Poll::Pending;
+                    }
+                    let payload_len = u32::from_be_bytes(*hdr) as usize;
+                    if payload_len > MAX_FRAME {
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("帧长度异常: {} 字节", payload_len),
+                        )));
+                    }
+                    // 转换到 Payload 阶段
+                    this.rd_state = RdState::Payload {
+                        pos: 0,
+                        len: payload_len,
+                        pkt: vec![0u8; payload_len],
+                    };
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
+        if let RdState::Payload { pos, len, pkt } = &mut this.rd_state {
+            let remaining = &mut pkt.as_mut_slice()[*pos..];
+            let mut p = ReadBuf::new(remaining);
+            match Pin::new(&mut this.inner).poll_read(cx, &mut p) {
+                Poll::Ready(Ok(())) => {
+                    let filled = p.filled().len();
+                    if filled == 0 {
+                        return Poll::Ready(Ok(()));
+                    }
+                    *pos += filled;
+                    if *pos < *len {
+                        return Poll::Pending;
+                    }
+                    let plaintext = match this.crypto.decrypt_frame(pkt) {
+                        Ok(pt) => pt,
+                        Err(e) => return Poll::Ready(Err(e)),
+                    };
+                    // 直接返回解密数据到用户缓冲区
+                    let n = plaintext.len().min(buf.remaining());
+                    buf.put_slice(&plaintext[..n]);
+                    // 剩余部分存入内部缓冲区
+                    if n < plaintext.len() {
+                        this.read_buf = plaintext;
+                        this.read_pos = n;
+                    }
+                    this.rd_state = RdState::Idle;
+                    return Poll::Ready(Ok(()));
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
         Poll::Pending
     }
 }
@@ -165,7 +224,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for EncryptedStream<S> {
         _cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        // 加密并序列化，然后委托给 inner
         let this = self.get_mut();
         let frame = match this.crypto.encrypt(buf) {
             Ok(f) => f,
@@ -192,51 +250,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for EncryptedStream<S> {
     }
 }
 
-/// EncryptedStream 的高层读取方法（需要 tokio runtime 驱动）
-impl<S: AsyncRead + AsyncWrite + Unpin> EncryptedStream<S> {
-    /// 读取解密后的数据到缓冲区，返回读取的字节数
-    /// 0 表示连接关闭
-    pub async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // 如果内部缓冲区有数据，先消耗
-        if self.read_pos < self.read_buf.len() {
-            let available = &self.read_buf[self.read_pos..];
-            let to_copy = available.len().min(buf.len());
-            buf[..to_copy].copy_from_slice(&available[..to_copy]);
-            self.read_pos += to_copy;
-            return Ok(to_copy);
-        }
-
-        // 从流读取下一帧
-        match self.read_frame().await {
-            Ok(()) => {
-                let available = &self.read_buf[self.read_pos..];
-                let to_copy = available.len().min(buf.len());
-                buf[..to_copy].copy_from_slice(&available[..to_copy]);
-                self.read_pos += to_copy;
-                Ok(to_copy)
-            }
-            Err(e) => {
-                if e.kind() == io::ErrorKind::UnexpectedEof {
-                    Ok(0)
-                } else {
-                    Err(e)
-                }
-            }
-        }
-    }
-
-    /// 写入加密数据
-    pub async fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        self.write_frame(data).await?;
-        Ok(data.len())
-    }
-
-    /// 写入全部加密数据
-    pub async fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
-        self.write_frame(data).await
-    }
-}
-
 /// 使用 HKDF-SHA256 从共享秘密派生 32 字节密钥
 ///
 /// HKDF 过程：extract(salt, ikm) → expand(prk, info, 32)
@@ -245,13 +258,11 @@ pub fn derive_key(shared_secret: &str) -> [u8; 32] {
 
     type HmacSha256 = hmac::Hmac<sha2::Sha256>;
 
-    // HKDF-Extract: PRK = HMAC-SHA256(salt, ikm)
     let salt = b"intrasweep-tunnel-v1";
     let mut extract = <HmacSha256 as Mac>::new_from_slice(salt).expect("HMAC key 创建失败");
     extract.update(shared_secret.as_bytes());
     let prk = extract.finalize().into_bytes();
 
-    // HKDF-Expand: OKM = HMAC-SHA256(PRK, info || 0x01)
     let info = b"tunnel-encryption-key";
     let mut expand = <HmacSha256 as Mac>::new_from_slice(&prk).expect("HMAC key 创建失败");
     expand.update(info);
@@ -286,12 +297,10 @@ mod tests {
         let plaintext = b"Hello, encrypted tunnel!";
         let frame = layer.encrypt(plaintext).unwrap();
 
-        // 帧: [4B len][24B nonce][ciphertext+tag]
         let frame_len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
         assert_eq!(frame_len, frame.len() - 4);
-        assert!(frame_len >= 24 + 16); // nonce + minimum ciphertext + tag
+        assert!(frame_len >= 24 + 16);
 
-        // 解密
         let decrypted = layer.decrypt_frame(&frame[4..]).unwrap();
         assert_eq!(&decrypted, plaintext);
     }
@@ -312,7 +321,6 @@ mod tests {
         let layer = CryptoLayer::new(&key);
 
         let mut frame = layer.encrypt(b"secret").unwrap();
-        // 篡改密文
         if frame.len() > 30 {
             frame[30] ^= 0x01;
         }

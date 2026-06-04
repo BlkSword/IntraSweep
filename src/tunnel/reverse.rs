@@ -7,6 +7,7 @@ use crate::tunnel::config::TunnelConfig;
 use crate::tunnel::models::{ConnectionInfo, TunnelEvent, TunnelEventHandler, TunnelStatus};
 use crate::tunnel::shutdown::Shutdown;
 use std::sync::Arc;
+use tracing;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
@@ -35,11 +36,10 @@ impl ReverseTunnel {
     /// 启动反向隧道（客户端模式 - 在目标主机上运行）
     pub async fn start_client(&self) -> Result<()> {
         // 验证配置
-        self.config.validate()
-            .map_err(|e| FlyWheelError::Other { message: e })?;
+        self.config.validate()?;
 
         let control_addr = self.config.remote_target.clone()
-            .ok_or_else(|| FlyWheelError::Other {
+            .ok_or_else(|| FlyWheelError::Config {
                 message: "反向隧道需要指定控制端地址".to_string(),
             })?;
 
@@ -89,15 +89,15 @@ impl ReverseTunnel {
             timeout_dur,
             TcpStream::connect(control_addr)
         ).await
-        .map_err(|_| FlyWheelError::Other {
-            message: format!("连接超时: {}", control_addr),
+        .map_err(|_| FlyWheelError::Timeout {
+            operation: format!("连接超时: {}", control_addr),
         })?
-        .map_err(|e| FlyWheelError::Other {
+        .map_err(|e| FlyWheelError::Network {
             message: format!("无法连接到 {}: {}", control_addr, e),
         })?;
 
         let local_addr = control_stream.local_addr()
-            .map_err(|e| FlyWheelError::Other {
+            .map_err(|e| FlyWheelError::Network {
                 message: format!("获取本地地址失败: {}", e),
             })?;
 
@@ -151,10 +151,10 @@ impl ReverseTunnel {
                 Duration::from_secs(60),
                 control_stream.read(&mut buf)
             ).await
-            .map_err(|_| FlyWheelError::Other {
-                message: "读取控制端指令超时".to_string(),
+            .map_err(|_| FlyWheelError::Timeout {
+                operation: "读取控制端指令超时".to_string(),
             })?
-            .map_err(|e| FlyWheelError::Other {
+            .map_err(|e| FlyWheelError::Network {
                 message: format!("读取控制端指令失败: {}", e),
             })?;
 
@@ -173,7 +173,7 @@ impl ReverseTunnel {
                 0x01 => {
                     // 响应心跳
                     if let Err(e) = control_stream.write_all(&[0x01]).await {
-                        eprintln!("[错误] 发送心跳响应失败: {}", e);
+                        tracing::error!("发送心跳响应失败: {}", e);
                         break;
                     }
                 }
@@ -186,13 +186,13 @@ impl ReverseTunnel {
 
                         // 连接到本地端口并转发数据
                         if let Err(e) = self.forward_to_local(port, data, &mut control_stream).await {
-                            eprintln!("[错误] 转发到本地端口 {} 失败: {}", port, e);
+                            tracing::error!("转发到本地端口 {} 失败: {}", port, e);
                         }
                     }
                 }
                 // 未知命令
                 cmd => {
-                    eprintln!("[警告] 未知命令: 0x{:02x}", cmd);
+                    tracing::warn!("未知命令: 0x{:02x}", cmd);
                 }
             }
         }
@@ -210,13 +210,13 @@ impl ReverseTunnel {
         let local_target = format!("127.0.0.1:{}", port);
 
         let mut local_stream = TcpStream::connect(&local_target).await
-            .map_err(|e| FlyWheelError::Other {
+            .map_err(|e| FlyWheelError::Network {
                 message: format!("连接本地 {} 失败: {}", local_target, e),
             })?;
 
         // 发送数据
         local_stream.write_all(data).await
-            .map_err(|e| FlyWheelError::Other {
+            .map_err(|e| FlyWheelError::Network {
                 message: format!("写入本地端口失败: {}", e),
             })?;
 
@@ -227,10 +227,10 @@ impl ReverseTunnel {
                 Duration::from_secs(30),
                 local_stream.read(&mut response_buf)
             ).await
-            .map_err(|_| FlyWheelError::Other {
-                message: "读取本地端口响应超时".to_string(),
+            .map_err(|_| FlyWheelError::Timeout {
+                operation: "读取本地端口响应超时".to_string(),
             })?
-            .map_err(|e| FlyWheelError::Other {
+            .map_err(|e| FlyWheelError::Network {
                 message: format!("读取本地端口响应失败: {}", e),
             })?;
 
@@ -244,7 +244,7 @@ impl ReverseTunnel {
             packet[1..].copy_from_slice(&response_buf[..n]);
 
             control_stream.write_all(&packet).await
-                .map_err(|e| FlyWheelError::Other {
+                .map_err(|e| FlyWheelError::Network {
                     message: format!("发送响应到控制端失败: {}", e),
                 })?;
         }
@@ -258,7 +258,7 @@ impl ReverseTunnel {
         use tokio::net::TcpListener;
 
         let listener = TcpListener::bind(&self.config.local_addr).await
-            .map_err(|e| FlyWheelError::Other {
+            .map_err(|e| FlyWheelError::Network {
                 message: format!("绑定端口 {} 失败: {}", self.config.local_addr, e),
             })?;
 
@@ -288,7 +288,7 @@ impl ReverseTunnel {
                     let permit = match semaphore.clone().try_acquire_owned() {
                         Ok(p) => p,
                         Err(_) => {
-                            eprintln!("[警告] 连接数已达上限，拒绝: {}", addr);
+                            tracing::warn!("连接数已达上限，拒绝: {}", addr);
                             drop(stream);
                             continue;
                         }
@@ -335,11 +335,10 @@ impl ReverseTunnel {
         use crate::tunnel::crypto::{CryptoLayer, derive_key};
         use std::sync::Arc as StdArc;
 
-        self.config.validate()
-            .map_err(|e| FlyWheelError::Other { message: e })?;
+        self.config.validate()?;
 
         let control_addr = self.config.remote_target.clone()
-            .ok_or_else(|| FlyWheelError::Other {
+            .ok_or_else(|| FlyWheelError::Config {
                 message: "反向隧道需要指定控制端地址".to_string(),
             })?;
 
@@ -395,17 +394,4 @@ impl ReverseTunnel {
         Ok(())
     }
 
-    /// 获取隧道状态
-    #[allow(dead_code)]
-    pub async fn get_status(&self) -> TunnelStatus {
-        self.status.read().await.clone()
-    }
-
-    /// 停止隧道
-    #[allow(dead_code)]
-    pub async fn stop(&self) {
-        let mut status = self.status.write().await;
-        status.stop();
-        self.event_handler.on_event(TunnelEvent::Stopped);
-    }
 }

@@ -582,7 +582,7 @@ mod tests {
 
     #[test]
     fn test_get_probe_data() {
-        assert_eq!(ServiceIdentifier::get_probe_data(80), "GET / HTTP/1.0\r\n\r\n");
+        assert_eq!(ServiceIdentifier::get_probe_data(80), "GET / HTTP/1.0\r\nHost: \r\n\r\n");
         assert_eq!(ServiceIdentifier::get_probe_data(22), "");
         assert_eq!(ServiceIdentifier::get_probe_data(6379), "*1\r\n$4\r\nPING\r\n");
     }

@@ -42,7 +42,23 @@ pub enum FlyWheelError {
     #[error("不支持的操作: {operation}")]
     Unsupported { operation: String },
 
-    /// 其他错误
+    /// 网络连接/监听错误
+    #[error("网络错误: {message}")]
+    Network { message: String },
+
+    /// 超时错误
+    #[error("超时: {operation}")]
+    Timeout { operation: String },
+
+    /// 配置/验证错误
+    #[error("配置错误: {message}")]
+    Config { message: String },
+
+    /// 协议握手/解析错误
+    #[error("协议错误: {message}")]
+    Protocol { message: String },
+
+    /// 其他错误（兜底，逐步迁移到具体变体）
     #[error("错误: {message}")]
     Other { message: String },
 }

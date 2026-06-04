@@ -8,13 +8,14 @@ use comfy_table::presets::UTF8_FULL;
 use comfy_table::Table;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// 扫描进度条
 pub struct ScanProgress {
     bar: ProgressBar,
     total: usize,
-    current: usize,
+    current: AtomicUsize,
     show_eta: bool,
 }
 
@@ -36,7 +37,7 @@ impl ScanProgress {
         Self {
             bar,
             total,
-            current: 0,
+            current: AtomicUsize::new(0),
             show_eta,
         }
     }
@@ -52,7 +53,7 @@ impl ScanProgress {
         Self {
             bar,
             total: 0,
-            current: 0,
+            current: AtomicUsize::new(0),
             show_eta: false,
         }
     }
@@ -60,11 +61,13 @@ impl ScanProgress {
     /// 增加进度
     pub fn inc(&self, n: u64) {
         self.bar.inc(n);
+        self.current.fetch_add(n as usize, Ordering::SeqCst);
     }
 
     /// 设置当前进度
     pub fn set_position(&self, pos: usize) {
         self.bar.set_position(pos as u64);
+        self.current.store(pos, Ordering::SeqCst);
     }
 
     /// 设置消息
@@ -94,7 +97,7 @@ impl ScanProgress {
 
     /// 获取当前进度
     pub fn current(&self) -> usize {
-        self.current
+        self.current.load(Ordering::SeqCst)
     }
 
     /// 获取总进度
@@ -107,13 +110,13 @@ impl ScanProgress {
         if self.total == 0 {
             100.0
         } else {
-            (self.current as f64 / self.total as f64) * 100.0
+            (self.current.load(Ordering::SeqCst) as f64 / self.total as f64) * 100.0
         }
     }
 
     /// 检查是否完成
     pub fn is_finished(&self) -> bool {
-        self.current >= self.total
+        self.current.load(Ordering::SeqCst) >= self.total
     }
 }
 

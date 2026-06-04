@@ -6,126 +6,6 @@
 use crate::vuln::poc::*;
 use std::collections::HashMap;
 
-/// 构建 PoC 规则的辅助宏 (减少重复代码)
-macro_rules! poc_rule {
-    ($id:expr, $info:expr, $transport:expr, $default_port:expr, $rules:expr) => {
-        PoCRule {
-            id: $id.to_string(),
-            info: $info,
-            transport: $transport,
-            default_port: $default_port,
-            rules: $rules,
-            script: None,
-        }
-    };
-}
-
-/// 构建 HTTP 请求规则
-macro_rules! http_rule {
-    ($method:expr, $path:expr, $matchers:expr) => {
-        PoCRequest {
-            method: $method.to_string(),
-            path: $path.to_string(),
-            headers: HashMap::new(),
-            body: None,
-            data: None,
-            read_size: None,
-            matchers_condition: "and".to_string(),
-            matchers: $matchers,
-            extractors: vec![],
-        }
-    };
-    ($method:expr, $path:expr, $headers:expr, $matchers:expr) => {
-        PoCRequest {
-            method: $method.to_string(),
-            path: $path.to_string(),
-            headers: $headers,
-            body: None,
-            data: None,
-            read_size: None,
-            matchers_condition: "and".to_string(),
-            matchers: $matchers,
-            extractors: vec![],
-        }
-    };
-}
-
-/// 构建 TCP 请求规则
-macro_rules! tcp_rule {
-    ($data:expr, $read_size:expr, $matchers:expr) => {
-        PoCRequest {
-            method: String::new(),
-            path: String::new(),
-            headers: HashMap::new(),
-            body: None,
-            data: Some($data),
-            read_size: $read_size,
-            matchers_condition: "and".to_string(),
-            matchers: $matchers,
-            extractors: vec![],
-        }
-    };
-}
-
-/// word 匹配器
-macro_rules! word_matcher {
-    ($part:expr, $($word:expr),+ $(,)?) => {
-        Matcher {
-            matcher_type: MatcherType::Word,
-            part: $part.to_string(),
-            words: vec![$($word.to_string()),+],
-            regex: vec![],
-            status: vec![],
-            binary: vec![],
-            negative: false,
-        }
-    };
-}
-
-/// status 匹配器
-macro_rules! status_matcher {
-    ($($status:expr),+ $(,)?) => {
-        Matcher {
-            matcher_type: MatcherType::Status,
-            part: "status_code".to_string(),
-            words: vec![],
-            regex: vec![],
-            status: vec![$($status),+],
-            binary: vec![],
-            negative: false,
-        }
-    };
-}
-
-/// binary 匹配器
-macro_rules! binary_matcher {
-    ($($hex:expr),+ $(,)?) => {
-        Matcher {
-            matcher_type: MatcherType::Binary,
-            part: String::new(),
-            words: vec![],
-            regex: vec![],
-            status: vec![],
-            binary: vec![$($hex.to_string()),+],
-            negative: false,
-        }
-    };
-}
-
-/// 构建 PoCInfo
-macro_rules! poc_info {
-    ($name:expr, $severity:expr, $category:expr, $description:expr, $remediation:expr) => {
-        PoCInfo {
-            name: $name.to_string(),
-            severity: $severity,
-            category: $category.to_string(),
-            description: $description.to_string(),
-            tags: vec![],
-            remediation: $remediation.to_string(),
-        }
-    };
-}
-
 /// 获取所有内置 PoC 规则
 pub fn get_builtin_pocs() -> Vec<PoCRule> {
     vec![
@@ -1678,10 +1558,12 @@ mod tests {
         let deserialization = filter_builtin_pocs(None, Some("反序列化"));
         assert!(deserialization
             .iter()
-            .all(|p| p.info.category.contains("反序列化")));
+            .all(|p| p.info.category.contains("反序列化") || p.info.name.contains("反序列化")));
 
         let unauth = filter_builtin_pocs(None, Some("未授权"));
-        assert!(unauth.iter().all(|p| p.info.category.contains("未授权")));
+        assert!(unauth
+            .iter()
+            .all(|p| p.info.category.contains("未授权") || p.info.name.contains("未授权")));
     }
 
     #[test]

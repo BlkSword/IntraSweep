@@ -3,7 +3,6 @@
 //! 定义隧道类型和配置结构
 
 use std::net::SocketAddr;
-use std::str::FromStr;
 
 /// 隧道类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,13 +121,6 @@ impl TunnelConfig {
         self
     }
 
-    /// 启用/禁用日志
-    #[allow(dead_code)]
-    pub fn with_log(mut self, enable: bool) -> Self {
-        self.enable_log = enable;
-        self
-    }
-
     /// 设置 SOCKS5 认证
     pub fn with_socks5_auth(mut self, username: String, password: String) -> Self {
         self.socks5_username = Some(username);
@@ -149,46 +141,39 @@ impl TunnelConfig {
     }
 
     /// 验证配置
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), super::super::core::error::FlyWheelError> {
         match self.tunnel_type {
             TunnelType::Forward => {
                 if self.remote_target.is_none() {
-                    return Err("正向隧道需要指定远程目标 (-t/--target)".to_string());
+                    return Err(crate::core::error::FlyWheelError::Config {
+                        message: "正向隧道需要指定远程目标 (-t/--target)".to_string(),
+                    });
                 }
             }
             TunnelType::Reverse => {
                 if self.remote_target.is_none() {
-                    return Err("反向隧道需要指定控制端地址 (-t/--target)".to_string());
+                    return Err(crate::core::error::FlyWheelError::Config {
+                        message: "反向隧道需要指定控制端地址 (-t/--target)".to_string(),
+                    });
                 }
             }
             TunnelType::Chain => {
                 if self.hops.is_empty() {
-                    return Err("链式隧道需要至少一个跳板 (-H/--hop)".to_string());
+                    return Err(crate::core::error::FlyWheelError::Config {
+                        message: "链式隧道需要至少一个跳板 (-H/--hop)".to_string(),
+                    });
                 }
                 if self.remote_target.is_none() {
-                    return Err("链式隧道需要指定最终目标 (-t/--target)".to_string());
+                    return Err(crate::core::error::FlyWheelError::Config {
+                        message: "链式隧道需要指定最终目标 (-t/--target)".to_string(),
+                    });
                 }
             }
-            TunnelType::Socks5 => {
-                // SOCKS5 不需要预先指定目标
-            }
+            TunnelType::Socks5 => {}
         }
 
         Ok(())
     }
-}
-
-/// 解析地址字符串为 SocketAddr
-#[allow(dead_code)]
-pub fn parse_addr(addr: &str, default_port: u16) -> Result<SocketAddr, String> {
-    let addr_str = if addr.contains(':') {
-        addr.to_string()
-    } else {
-        format!("{}:{}", addr, default_port)
-    };
-
-    SocketAddr::from_str(&addr_str)
-        .map_err(|e| format!("无效的地址格式 '{}': {}", addr, e))
 }
 
 #[cfg(test)]
@@ -225,12 +210,5 @@ mod tests {
             .with_hops(vec!["hop1:2222".to_string()])
             .with_remote_target("target:80".to_string());
         assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_parse_addr() {
-        assert!(parse_addr("127.0.0.1:8080", 80).is_ok());
-        assert!(parse_addr("127.0.0.1", 80).is_ok());
-        assert!(parse_addr("invalid", 80).is_err());
     }
 }

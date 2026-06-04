@@ -328,7 +328,7 @@ mod tests {
         };
 
         let (_, args) = build_command(&config, "192.168.1.1", 445, None).unwrap();
-        assert_eq!(args[3], "192.168.1.1");
-        assert_eq!(args[5], "445");
+        assert_eq!(args[4], "192.168.1.1");
+        assert_eq!(args[6], "445");
     }
 }

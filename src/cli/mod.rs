@@ -130,6 +130,10 @@ pub struct Cli {
     /// 日志文件路径
     #[arg(long, global = true)]
     pub log_file: Option<PathBuf>,
+
+    /// 配置文件路径 (YAML)
+    #[arg(long, global = true)]
+    pub config: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
