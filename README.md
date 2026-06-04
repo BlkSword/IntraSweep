@@ -11,10 +11,12 @@ IntraSweep 是一个基于 Rust 开发的高性能内网渗透辅助工具，提
 - **AD 域枚举** - LDAP 查询用户/组/计算机，Kerberoasting、AS-REP Roasting、BloodHound 数据导出
 - **提权检测** - Windows 6 类 / Linux 8 类自动化提权向量检查
 - **密码爆破** - 8 种服务（SSH/RDP/Redis/PostgreSQL/MySQL/MSSQL/MongoDB/WinRM），Semaphore 并发控制 + 命中即停
-- **内网穿透** - 正向/反向隧道、SOCKS5 代理、多级链式跳板，支持 XChaCha20-Poly1305 加密和连接多路复用，Ctrl+C 优雅关闭
+- **内网穿透** - 正向/反向隧道、SOCKS5 代理、多级链式跳板，XChaCha20-Poly1305 AEAD 加密传输，连接多路复用，Ctrl+C 优雅关闭
 - **格式化输出** - JSON/CSV 双格式导出
+- **配置文件支持** - YAML 配置文件预设扫描/爆破/隧道参数，CLI 参数优先级高于配置文件
+- **结构化错误** - 13 种错误变体（Network/Timeout/Config/Protocol 等），精确定位故障原因
 - **OPSEC 优化** - LTO + strip + codegen-units=1 最小体积、敏感字符串 XOR 编译期混淆
-- **模块化架构** - CLI 层与业务逻辑分离，各功能模块独立自治
+- **代码质量** - 225 个测试 0 失败、tracing 结构化日志、模块化架构
 
 ## 安装
 
@@ -34,25 +36,43 @@ cargo build --release
 
 ```
 src/
-├── main.rs           入口（命令路由）
-├── cli/              CLI 层（命令处理、交互式向导、结果展示）
-│   ├── mod.rs        Cli/Commands 定义、InteractiveMenu、共享工具
-│   ├── scan.rs       扫描命令
-│   ├── crack.rs      爆破命令
-│   ├── tunnel.rs     隧道命令
-│   ├── vuln.rs       漏洞扫描命令
-│   ├── ad.rs         AD 枚举命令
-│   ├── privesc.rs    提权检测命令
-│   └── system.rs     信息收集命令
-├── scanner/          扫描引擎（主机发现、端口扫描、服务探测、Web 指纹）
-├── cracker/          密码爆破（8 种服务、并发引擎、字典管理）
-├── tunnel/           网络穿透（正向/反向/SOCKS5/链式、加密、多路复用、双向中继、优雅关闭）
-├── vuln/             漏洞扫描（PoC 引擎、内置规则、外部加载、脚本执行）
-├── ad/               AD 域枚举（LDAP 查询、Kerberoasting、BloodHound 导出）
-├── privesc/          提权检测（Windows/Linux 平台检查）
-├── collector/        信息收集（系统、网络、进程、凭据、文件）
-├── core/             核心库（错误处理、日志、字符串混淆）
-└── output/           输出层（JSON/CSV 导出、彩色终端、进度条）
+├── main.rs            入口（命令路由、配置加载）
+├── lib.rs             库入口（供集成测试引用）
+├── cli/               CLI 层（命令处理、交互式向导、结果展示）
+│   ├── mod.rs         Cli/Commands 定义、InteractiveMenu、共享工具
+│   ├── scan.rs        扫描命令
+│   ├── crack.rs       爆破命令
+│   ├── tunnel.rs      隧道命令
+│   ├── vuln.rs        漏洞扫描命令
+│   ├── ad.rs          AD 枚举命令
+│   ├── privesc.rs     提权检测命令
+│   └── system.rs      信息收集命令
+├── scanner/           扫描引擎（主机发现、端口扫描、服务探测、Web 指纹）
+├── cracker/           密码爆破（8 种服务、并发引擎、字典管理、NTLM 认证）
+├── tunnel/            网络穿透
+│   ├── crypto.rs      XChaCha20-Poly1305 加密层
+│   ├── mux.rs         连接多路复用
+│   ├── shutdown.rs    优雅关闭（CancellationToken）
+│   ├── relay.rs       泛型双向中继
+│   ├── forward.rs     正向隧道
+│   ├── reverse.rs     反向隧道
+│   ├── socks5.rs      SOCKS5 代理
+│   ├── chain.rs       链式跳板
+│   ├── config.rs      隧道配置
+│   └── models.rs      事件/状态模型
+├── vuln/              漏洞扫描（PoC 引擎、内置规则、外部加载、脚本执行）
+├── ad/                AD 域枚举（LDAP 查询、Kerberoasting、BloodHound 导出）
+├── privesc/           提权检测（Windows/Linux 平台检查）
+├── collector/         信息收集（系统、网络、进程、凭据、文件）
+├── core/              核心库
+│   ├── error.rs       结构化错误类型（Io/Network/Timeout/Config/Protocol 等 13 种变体）
+│   ├── config.rs      配置文件加载（YAML）
+│   ├── log.rs         日志初始化（tracing 生态）
+│   └── obfstr.rs      字符串编译期 XOR 混淆
+└── output/            输出层（JSON/CSV 导出、彩色终端、进度条）
+tests/
+├── crypto_integration.rs  加密流端到端测试
+└── tunnel_integration.rs  隧道转发端到端测试
 ```
 
 ## 快速开始
@@ -63,7 +83,32 @@ src/
 intrasweep -v <command> ...          # 详细输出 (DEBUG 级别日志)
 intrasweep -q <command> ...          # 安静模式 (仅错误)
 intrasweep --log-file log.txt <command> ...  # 日志写入文件
+intrasweep --config profile.yaml <command> ...  # 从配置文件加载预设参数
 ```
+
+配置文件为 YAML 格式，可预设扫描目标、爆破字典、隧道加密密钥等：
+
+```yaml
+# intrasweep.yaml
+defaults:
+  concurrency: 50
+  timeout: 10
+  format: json
+
+scan:
+  targets: [192.168.1.0/24]
+  type: comprehensive
+  webfinger: true
+
+crack:
+  username_file: ./dict/users.txt
+  password_file: ./dict/passwords.txt
+
+tunnel:
+  encryption_key: "my-secret"
+```
+
+CLI 显式参数优先级高于配置文件。
 
 ### 网络扫描
 
@@ -258,7 +303,7 @@ intrasweep tunnel forward -t 192.168.1.100:3389 -L 8080 --encryption-key "my-sec
 intrasweep tunnel reverse -t 10.0.0.1:8888 -L 8080 --encryption-key "my-secret"
 ```
 
-所有隧道类型支持 Ctrl+C 优雅关闭，收到信号后自动断开连接并清理资源。
+加密隧道通过客户端自动包装 `EncryptedStream` 实现透明加解密：客户端与隧道之间为密文传输，隧道与内网目标之间为明文转发。所有隧道类型支持 Ctrl+C 优雅关闭，收到信号后自动断开连接并清理资源。
 
 ## 命令参考
 
@@ -554,7 +599,7 @@ script:
 
 ## 版本
 
-v0.3.0
+v0.4.0
 
 ## License
 
