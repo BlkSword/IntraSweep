@@ -117,7 +117,7 @@ fn check_suid_binaries() -> Vec<PrivescFinding> {
     let mut found_exploitable = Vec::new();
     for line in output.lines() {
         let path = line.trim();
-        if let Some(_) = exploitable.iter().find(|(p, _)| *p == path) {
+        if exploitable.iter().any(|(p, _)| *p == path) {
             found_exploitable.push(path.to_string());
         }
     }
@@ -230,13 +230,9 @@ fn check_cron_jobs() -> Vec<PrivescFinding> {
 
         if meta.is_some() {
             // 检查是否可写 — 尝试以追加方式打开
-            let test_path = if path.ends_with('/') {
-                format!("{}.intrasweep_test", path)
-            } else {
-                format!("{}.intrasweep_test", path)
-            };
+            let test_path = format!("{}.intrasweep_test", path);
             let writable = std::fs::OpenOptions::new()
-                .write(true)
+                
                 .append(true)
                 .open(&test_path)
                 .is_ok();
@@ -290,7 +286,7 @@ fn check_writable_etc() -> Vec<PrivescFinding> {
             // 尝试写入检测
             let test_path = format!("{}.intrasweep_test", path);
             let writable = std::fs::OpenOptions::new()
-                .write(true)
+                
                 .append(true)
                 .open(&test_path)
                 .is_ok();
@@ -500,7 +496,7 @@ fn is_kernel_in_range(version: &str, min: &str, max: &str) -> bool {
 
 fn parse_kernel_version(version: &str) -> Vec<u32> {
     version
-        .split(|c: char| c == '.' || c == '-')
+        .split(['.', '-'])
         .filter_map(|s| s.parse().ok())
         .collect()
 }

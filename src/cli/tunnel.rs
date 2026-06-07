@@ -21,8 +21,8 @@ pub fn run_tunnel_cmd(
     max_connections: usize,
     timeout: u64,
 ) -> Result<()> {
-    if tunnel_type.is_none() {
-        run_interactive_tunnel(
+    match tunnel_type {
+        Some(tunnel_type) => run_tunnel(
             tunnel_type,
             target,
             local_port,
@@ -32,10 +32,9 @@ pub fn run_tunnel_cmd(
             socks5_password,
             max_connections,
             timeout,
-        )
-    } else {
-        run_tunnel(
-            tunnel_type.unwrap(),
+        ),
+        None => run_interactive_tunnel(
+            tunnel_type,
             target,
             local_port,
             remote_port,
@@ -44,7 +43,7 @@ pub fn run_tunnel_cmd(
             socks5_password,
             max_connections,
             timeout,
-        )
+        ),
     }
 }
 
@@ -61,7 +60,7 @@ fn run_tunnel(
     timeout: u64,
 ) -> Result<()> {
     // 解析隧道类型
-    let tunnel_type_enum = match TunnelType::from_str(&tunnel_type) {
+    let tunnel_type_enum = match TunnelType::parse(&tunnel_type) {
         Some(t) => t,
         None => {
             print_error(&format!("未知的隧道类型: {}", tunnel_type));
@@ -106,7 +105,7 @@ fn run_tunnel(
 
     // 处理加密密钥
     if let Some(ref key) = config.encryption_key {
-        print_success(&format!("已启用加密 (XChaCha20-Poly1305)"));
+        print_success("已启用加密 (XChaCha20-Poly1305)");
         let _ = key; // 加密密钥在隧道内部使用
     }
 
@@ -189,7 +188,8 @@ fn run_interactive_tunnel(
         tunnel_type
     };
 
-    let tunnel_type_enum = TunnelType::from_str(&tunnel_type).unwrap();
+    let tunnel_type_enum = TunnelType::parse(&tunnel_type)
+        .expect("交互式向导应保证隧道类型有效");
 
     // 步骤 2: 本地端口
     InteractiveMenu::print_step(2, 5, "本地监听端口");
@@ -216,7 +216,8 @@ fn run_interactive_tunnel(
     // 步骤 3: 远程目标/跳板
     let mut config = TunnelConfig::new(
         tunnel_type_enum,
-        format!("127.0.0.1:{}", local_port).parse().unwrap(),
+        format!("127.0.0.1:{}", local_port).parse()
+            .expect("本地回环地址格式必须有效"),
     );
 
     match tunnel_type_enum {

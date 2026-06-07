@@ -2,6 +2,9 @@
 //!
 //! 定义 Cli/Commands 结构、交互式菜单、共享工具函数
 
+// CLI 命令处理函数需要较多参数传递用户配置
+#![allow(clippy::too_many_arguments)]
+
 pub mod ad;
 pub mod crack;
 pub mod privesc;
@@ -11,7 +14,7 @@ pub mod tunnel;
 pub mod vuln;
 
 use crate::core::Result;
-use crate::output::color::{print_error, print_info, print_success, Color};
+use crate::output::color::{print_error, Color};
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -26,10 +29,12 @@ impl InteractiveMenu {
     /// 读取用户输入
     pub fn read_input(prompt: &str) -> String {
         print!("{}", prompt);
-        io::stdout().flush().unwrap();
+        let _ = io::stdout().flush();
 
         let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
+        if io::stdin().read_line(&mut input).is_err() {
+            return String::new();
+        }
         input.trim().to_string()
     }
 

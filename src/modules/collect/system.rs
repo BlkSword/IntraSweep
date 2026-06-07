@@ -182,7 +182,7 @@ impl SystemCollector {
         } else {
             match whoami::fallible::hostname() {
                 Ok(h) => {
-                    h.split('.').skip(1).next().map(|d| d.to_string())
+                    h.split('.').nth(1).map(|d| d.to_string())
                 }
                 Err(_) => None,
             }
@@ -412,7 +412,7 @@ impl SystemCollector {
 
         // 使用 whoami /groups 获取组信息
         if let Ok(output) = Command::new("whoami")
-            .args(&["/groups", "/fo", "csv"])
+            .args(["/groups", "/fo", "csv"])
             .output()
         {
             let content = String::from_utf8_lossy(&output.stdout);
@@ -486,7 +486,7 @@ impl SystemCollector {
         // 方法: 尝试执行需要管理员权限的操作
         // 使用 net session 命令检测管理员权限
         if let Ok(output) = Command::new("net")
-            .args(&["session"])
+            .args(["session"])
             .output()
         {
             // 如果命令执行成功（退出码 0），说明有管理员权限

@@ -16,7 +16,7 @@ pub enum OutputFormat {
 
 impl OutputFormat {
     /// 从字符串解析
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "json" => Some(OutputFormat::Json),
             "csv" => Some(OutputFormat::Csv),
@@ -52,7 +52,7 @@ pub fn export_json(result: &ScanResult, path: &Path) -> Result<()> {
 pub fn export_csv(result: &ScanResult, path: &Path) -> Result<()> {
     let mut wtr = csv::Writer::from_path(path)?;
 
-    wtr.write_record(&[
+    wtr.write_record([
         "IP", "端口", "状态", "服务", "版本", "Banner",
         "Web应用", "Web版本", "Web类别", "标题", "URL", "FaviconHash",
     ])?;
@@ -62,7 +62,7 @@ pub fn export_csv(result: &ScanResult, path: &Path) -> Result<()> {
         if host.open_ports.is_empty() && !host.web_fingerprints.is_empty() {
             for wf in &host.web_fingerprints {
                 for app in &wf.web_apps {
-                    wtr.write_record(&[
+                    wtr.write_record([
                         &host.ip,
                         "",
                         "",
@@ -78,7 +78,7 @@ pub fn export_csv(result: &ScanResult, path: &Path) -> Result<()> {
                     ])?;
                 }
                 if wf.web_apps.is_empty() {
-                    wtr.write_record(&[
+                    wtr.write_record([
                         &host.ip,
                         "",
                         "",
@@ -103,7 +103,7 @@ pub fn export_csv(result: &ScanResult, path: &Path) -> Result<()> {
                 .collect();
 
             if related_fps.is_empty() {
-                wtr.write_record(&[
+                wtr.write_record([
                     &host.ip,
                     &port_str,
                     port.state.zh_name(),
@@ -115,7 +115,7 @@ pub fn export_csv(result: &ScanResult, path: &Path) -> Result<()> {
             } else {
                 for wf in related_fps {
                     for app in &wf.web_apps {
-                        wtr.write_record(&[
+                        wtr.write_record([
                             &host.ip,
                             &port_str,
                             port.state.zh_name(),
@@ -131,7 +131,7 @@ pub fn export_csv(result: &ScanResult, path: &Path) -> Result<()> {
                         ])?;
                     }
                     if wf.web_apps.is_empty() {
-                        wtr.write_record(&[
+                        wtr.write_record([
                             &host.ip,
                             &port_str,
                             port.state.zh_name(),
@@ -172,11 +172,11 @@ mod tests {
 
     #[test]
     fn test_output_format_from_str() {
-        assert_eq!(OutputFormat::from_str("json"), Some(OutputFormat::Json));
-        assert_eq!(OutputFormat::from_str("csv"), Some(OutputFormat::Csv));
-        assert_eq!(OutputFormat::from_str("JSON"), Some(OutputFormat::Json));
-        assert_eq!(OutputFormat::from_str("CSV"), Some(OutputFormat::Csv));
-        assert_eq!(OutputFormat::from_str("xml"), None);
+        assert_eq!(OutputFormat::parse("json"), Some(OutputFormat::Json));
+        assert_eq!(OutputFormat::parse("csv"), Some(OutputFormat::Csv));
+        assert_eq!(OutputFormat::parse("JSON"), Some(OutputFormat::Json));
+        assert_eq!(OutputFormat::parse("CSV"), Some(OutputFormat::Csv));
+        assert_eq!(OutputFormat::parse("xml"), None);
     }
 
     #[test]

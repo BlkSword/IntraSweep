@@ -2,6 +2,9 @@
 //!
 //! 生成 BloodHound 兼容的 JSON 格式，可被 BloodHound 导入
 
+// BloodHound JSON 格式要求 PascalCase 字段名
+#![allow(non_snake_case)]
+
 use crate::ad::{AdComputer, AdEnumResult, AdGroup, AdUser};
 use serde::Serialize;
 use std::path::Path;
@@ -217,10 +220,9 @@ fn write_bh_file<T: Serialize + Clone>(
 }
 
 fn user_to_bh(user: &AdUser, domain: &str) -> BhUser {
-    let dont_req_preauth = user
+    let dont_req_preauth = !user
         .spn
-        .is_empty()
-        == false; // simplified; actual check needs UAC flag
+        .is_empty(); // simplified; actual check needs UAC flag
     let has_spn = !user.spn.is_empty();
 
     BhUser {

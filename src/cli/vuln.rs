@@ -16,13 +16,12 @@ pub fn run_vuln_cmd(
     concurrency: usize,
     timeout: u64,
 ) -> Result<()> {
-    let output_fmt = OutputFormat::from_str(format)
+    let output_fmt = OutputFormat::parse(format)
         .unwrap_or(OutputFormat::Json);
 
-    if targets.is_none() {
-        run_interactive_vuln(poc_file, severity, category, output_fmt, output, concurrency, timeout)
-    } else {
-        run_vuln_scan(targets.unwrap(), poc_file, severity, category, output_fmt, output, concurrency, timeout)
+    match targets {
+        Some(targets) => run_vuln_scan(targets, poc_file, severity, category, output_fmt, output, concurrency, timeout),
+        None => run_interactive_vuln(poc_file, severity, category, output_fmt, output, concurrency, timeout),
     }
 }
 
@@ -88,7 +87,7 @@ fn run_vuln_scan(
 
     let path = output.unwrap_or_else(|| {
         let base = if !result.targets.is_empty() {
-            result.targets[0].replace('.', "_").replace(':', "_")
+            result.targets[0].replace(['.', ':'], "_")
         } else {
             "vuln".to_string()
         };
@@ -110,7 +109,7 @@ fn run_vuln_scan(
 }
 
 fn run_interactive_vuln(
-    poc_file: Option<PathBuf>,
+    _poc_file: Option<PathBuf>,
     severity: Option<String>,
     category: Option<String>,
     output_fmt: OutputFormat,
@@ -241,16 +240,16 @@ fn print_vuln_results(result: &crate::vuln::VulnScanResult) {
 
     println!("  发现漏洞: {}", result.stats.vulnerabilities_found);
     if result.stats.critical_count > 0 {
-        println!("  {}{}严重: {}{}", "\x1b[31m", "■", result.stats.critical_count, "\x1b[0m");
+        println!("  \x1b[31m■严重: {}\x1b[0m", result.stats.critical_count);
     }
     if result.stats.high_count > 0 {
-        println!("  {}{}高危: {}{}", "\x1b[33m", "■", result.stats.high_count, "\x1b[0m");
+        println!("  \x1b[33m■高危: {}\x1b[0m", result.stats.high_count);
     }
     if result.stats.medium_count > 0 {
-        println!("  {}{}中危: {}{}", "\x1b[36m", "■", result.stats.medium_count, "\x1b[0m");
+        println!("  \x1b[36m■中危: {}\x1b[0m", result.stats.medium_count);
     }
     if result.stats.low_count > 0 {
-        println!("  {}{}低危: {}{}", "\x1b[32m", "■", result.stats.low_count, "\x1b[0m");
+        println!("  \x1b[32m■低危: {}\x1b[0m", result.stats.low_count);
     }
     println!();
 
@@ -281,12 +280,11 @@ fn print_vuln_results(result: &crate::vuln::VulnScanResult) {
     println!();
 
     for finding in &result.findings {
-        println!("  {}[{}] {} {}{} - {}:{}",
+        println!("  {}[{}] {} {}\x1b[0m - {}:{}",
             finding.severity.color_code(),
             finding.severity.display_name(),
             finding.vuln_id,
             finding.vuln_name,
-            "\x1b[0m",
             finding.target,
             finding.port);
         if !finding.description.is_empty() {
@@ -306,13 +304,13 @@ fn print_vuln_results(result: &crate::vuln::VulnScanResult) {
 fn export_vuln_csv(result: &crate::vuln::VulnScanResult, path: &std::path::Path) -> Result<()> {
     let mut wtr = csv::Writer::from_path(path)?;
 
-    wtr.write_record(&[
+    wtr.write_record([
         "目标", "端口", "漏洞ID", "漏洞名称", "严重性", "类别",
         "描述", "证据", "修复建议",
     ])?;
 
     for finding in &result.findings {
-        wtr.write_record(&[
+        wtr.write_record([
             &finding.target,
             &finding.port.to_string(),
             &finding.vuln_id,

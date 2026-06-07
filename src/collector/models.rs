@@ -72,6 +72,7 @@ pub struct NetworkStats {
 
 /// 进程信息报告
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ProcessReport {
     /// 进程总数
     pub total_count: usize,
@@ -171,17 +172,6 @@ impl Default for NetworkReport {
     }
 }
 
-impl Default for ProcessReport {
-    fn default() -> Self {
-        Self {
-            total_count: 0,
-            processes: Vec::new(),
-            suspicious: Vec::new(),
-            high_cpu: Vec::new(),
-            high_memory: Vec::new(),
-        }
-    }
-}
 
 impl Default for CredentialReport {
     fn default() -> Self {

@@ -10,7 +10,7 @@ use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 /// 最大帧载荷（1 MB）
 const MAX_FRAME: usize = 1024 * 1024;
@@ -39,7 +39,7 @@ impl CryptoLayer {
         let ciphertext = self
             .cipher
             .encrypt(&nonce, plaintext)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("加密失败: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("加密失败: {}", e)))?;
 
         let total_len = 24 + ciphertext.len();
         let mut frame = Vec::with_capacity(4 + total_len);
@@ -62,7 +62,7 @@ impl CryptoLayer {
 
         self.cipher
             .decrypt(nonce, ciphertext)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("解密失败: {}", e)))
+            .map_err(|e| io::Error::other(format!("解密失败: {}", e)))
     }
 }
 

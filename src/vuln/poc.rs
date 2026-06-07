@@ -7,12 +7,14 @@ use std::collections::HashMap;
 
 /// 漏洞严重性级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(Default)]
 pub enum Severity {
     #[serde(rename = "info")]
     Info,
     #[serde(rename = "low")]
     Low,
     #[serde(rename = "medium")]
+    #[default]
     Medium,
     #[serde(rename = "high")]
     High,
@@ -53,29 +55,22 @@ impl Severity {
     }
 }
 
-impl Default for Severity {
-    fn default() -> Self {
-        Severity::Medium
-    }
-}
 
 /// 传输协议类型
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Transport {
+    #[default]
     Http,
     Tcp,
     Script,
 }
 
-impl Default for Transport {
-    fn default() -> Self {
-        Transport::Http
-    }
-}
 
 /// PoC 规则完整定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct PoCRule {
     pub id: String,
     pub info: PoCInfo,
@@ -118,6 +113,7 @@ fn default_script_timeout() -> u64 {
 
 /// PoC 元信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct PoCInfo {
     pub name: String,
     #[serde(default)]
@@ -172,31 +168,7 @@ impl Default for PoCRequest {
     }
 }
 
-impl Default for PoCRule {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            info: PoCInfo::default(),
-            transport: Transport::default(),
-            default_port: None,
-            rules: Vec::new(),
-            script: None,
-        }
-    }
-}
 
-impl Default for PoCInfo {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            severity: Severity::default(),
-            category: String::new(),
-            description: String::new(),
-            tags: Vec::new(),
-            remediation: String::new(),
-        }
-    }
-}
 
 fn default_method() -> String {
     "GET".to_string()

@@ -40,7 +40,7 @@ impl TunnelType {
     }
 
     /// 从字符串解析隧道类型
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "forward" | "f" | "fo" => Some(TunnelType::Forward),
             "reverse" | "r" | "re" => Some(TunnelType::Reverse),
@@ -182,12 +182,12 @@ mod tests {
 
     #[test]
     fn test_tunnel_type_from_str() {
-        assert_eq!(TunnelType::from_str("forward"), Some(TunnelType::Forward));
-        assert_eq!(TunnelType::from_str("f"), Some(TunnelType::Forward));
-        assert_eq!(TunnelType::from_str("reverse"), Some(TunnelType::Reverse));
-        assert_eq!(TunnelType::from_str("socks5"), Some(TunnelType::Socks5));
-        assert_eq!(TunnelType::from_str("chain"), Some(TunnelType::Chain));
-        assert_eq!(TunnelType::from_str("invalid"), None);
+        assert_eq!(TunnelType::parse("forward"), Some(TunnelType::Forward));
+        assert_eq!(TunnelType::parse("f"), Some(TunnelType::Forward));
+        assert_eq!(TunnelType::parse("reverse"), Some(TunnelType::Reverse));
+        assert_eq!(TunnelType::parse("socks5"), Some(TunnelType::Socks5));
+        assert_eq!(TunnelType::parse("chain"), Some(TunnelType::Chain));
+        assert_eq!(TunnelType::parse("invalid"), None);
     }
 
     #[test]

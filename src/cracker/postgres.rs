@@ -41,10 +41,7 @@ impl Cracker for PostgresCracker {
                 Err(_) => return false,
             };
 
-            match rt.block_on(tokio_postgres::connect(&conn_str, NoTls)) {
-                Ok(_) => true,
-                Err(_) => false,
-            }
+            rt.block_on(tokio_postgres::connect(&conn_str, NoTls)).is_ok()
         }).await
     }
 

@@ -187,7 +187,7 @@ impl HostScanner {
 
         // 使用futures::future::select_all等待任意任务完成
         let (result, _index, _remaining) =
-            futures::future::select_all(tasks.drain(..).collect::<Vec<_>>()).await;
+            futures::future::select_all(std::mem::take(tasks)).await;
         result.ok()
     }
 

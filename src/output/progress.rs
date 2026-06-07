@@ -173,8 +173,7 @@ impl SimpleProgress {
         };
 
         let filled = (progress as usize) * self.width / 100;
-        let bar: String = std::iter::repeat('=')
-            .take(filled)
+        let bar: String = std::iter::repeat_n('=', filled)
             .chain(std::iter::repeat(' '))
             .take(self.width)
             .collect();
@@ -192,7 +191,7 @@ impl SimpleProgress {
         let full_msg = format!("{}{}", msg, clear_spaces);
 
         print!("{}", full_msg);
-        io::stdout().flush().unwrap();
+        let _ = io::stdout().flush();
 
         self.last_print_len = msg.len();
     }

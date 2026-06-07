@@ -22,49 +22,48 @@ pub fn run_scan(
     format: &str,
     output: Option<PathBuf>,
 ) -> Result<()> {
-    let output_fmt = OutputFormat::from_str(format).unwrap_or(OutputFormat::Json);
+    let output_fmt = OutputFormat::parse(format).unwrap_or(OutputFormat::Json);
 
     // 如果没有提供目标或扫描类型，进入交互式模式
-    if targets.is_none() || scan_type.is_none() {
-        run_interactive_scan(targets, scan_type, fast, webfinger, output_fmt, output)
-    } else {
-        // 快速模式：使用默认配置
-        let targets = targets.unwrap();
-        let scan_type = scan_type.unwrap();
-        let preset = if fast {
-            ScanPreset::Fast
-        } else {
-            ScanPreset::Standard
-        };
+    match (&targets, &scan_type) {
+        (Some(targets), Some(scan_type)) => {
+            // 快速模式：使用默认配置
+            let preset = if fast {
+                ScanPreset::Fast
+            } else {
+                ScanPreset::Standard
+            };
 
-        match parse_scan_type(&scan_type) {
-            Some("host") => {
-                if targets.is_empty() {
-                    print_error("主机扫描需要指定目标");
+            match parse_scan_type(scan_type) {
+                Some("host") => {
+                    if targets.is_empty() {
+                        print_error("主机扫描需要指定目标");
+                        std::process::exit(1);
+                    }
+                    run_host_scan(targets.clone(), preset, None, output)
+                }
+                Some("port") => {
+                    if targets.is_empty() {
+                        print_error("端口扫描需要指定目标");
+                        std::process::exit(1);
+                    }
+                    run_port_scan_simple(targets.clone(), preset, webfinger, output_fmt, output)
+                }
+                Some("comprehensive") => {
+                    if targets.is_empty() {
+                        print_error("综合扫描需要指定目标");
+                        std::process::exit(1);
+                    }
+                    run_comprehensive_scan_simple(targets.clone(), preset, webfinger, output_fmt, output)
+                }
+                _ => {
+                    print_error(&format!("未知的扫描类型: {}", scan_type));
+                    print_scan_types();
                     std::process::exit(1);
                 }
-                run_host_scan(targets, preset, None, output)
-            }
-            Some("port") => {
-                if targets.is_empty() {
-                    print_error("端口扫描需要指定目标");
-                    std::process::exit(1);
-                }
-                run_port_scan_simple(targets, preset, webfinger, output_fmt, output)
-            }
-            Some("comprehensive") => {
-                if targets.is_empty() {
-                    print_error("综合扫描需要指定目标");
-                    std::process::exit(1);
-                }
-                run_comprehensive_scan_simple(targets, preset, webfinger, output_fmt, output)
-            }
-            _ => {
-                print_error(&format!("未知的扫描类型: {}", scan_type));
-                print_scan_types();
-                std::process::exit(1);
             }
         }
+        _ => run_interactive_scan(targets, scan_type, fast, webfinger, output_fmt, output),
     }
 }
 
@@ -256,7 +255,7 @@ fn configure_advanced_options(config: &mut ScanConfig) {
     let skip = InteractiveMenu::read_input("  按 Enter 跳过 [使用默认: TCP SYN] 或选择 [1-4]: ");
     if !skip.is_empty() {
         if let Ok(method) = skip.parse::<usize>() {
-            if method >= 1 && method <= 4 {
+            if (1..=4).contains(&method) {
                 config.host_scan_method = match method {
                     1 => HostScanMethod::TcpSyn,
                     2 => HostScanMethod::Icmp,
@@ -286,7 +285,7 @@ fn configure_advanced_options(config: &mut ScanConfig) {
         InteractiveMenu::read_input("  按 Enter 跳过 [使用默认: TCP Connect] 或选择 [1-3]: ");
     if !skip.is_empty() {
         if let Ok(method) = skip.parse::<usize>() {
-            if method >= 1 && method <= 3 {
+            if (1..=3).contains(&method) {
                 config.port_scan_method = match method {
                     1 => PortScanMethod::TcpConnect,
                     2 => PortScanMethod::TcpSyn,
@@ -362,7 +361,7 @@ fn run_host_scan(
     }
 
     println!();
-    print_info(&format!("开始主机存活扫描"));
+    print_info("开始主机存活扫描");
     print_info(&format!("目标: {}", targets.join(", ")));
     print_info(&format!("预设: {:?}", preset));
     print_info(&format!(
@@ -409,7 +408,7 @@ fn run_port_scan_simple(
     }
 
     println!();
-    print_info(&format!("开始端口扫描"));
+    print_info("开始端口扫描");
     print_info(&format!("目标: {}", targets.join(", ")));
     print_info(&format!("预设: {:?}", preset));
     if webfinger {
@@ -460,7 +459,7 @@ fn run_comprehensive_scan_simple(
     }
 
     println!();
-    print_info(&format!("开始综合扫描"));
+    print_info("开始综合扫描");
     print_info(&format!("目标: {}", targets.join(", ")));
     print_info(&format!("预设: {:?}", preset));
     if webfinger {
@@ -505,7 +504,7 @@ fn run_port_scan_from_config(
     output: Option<PathBuf>,
 ) -> Result<()> {
     println!();
-    print_info(&format!("开始端口扫描"));
+    print_info("开始端口扫描");
     print_info(&format!("目标: {}", targets.join(", ")));
     print_info(&format!("预设: {}", format_preset(&config)));
     print_info(&format!(
@@ -558,7 +557,7 @@ fn run_comprehensive_scan_from_config(
     output: Option<PathBuf>,
 ) -> Result<()> {
     println!();
-    print_info(&format!("开始综合扫描"));
+    print_info("开始综合扫描");
     print_info(&format!("目标: {}", targets.join(", ")));
     print_info(&format!("预设: {}", format_preset(&config)));
     print_info(&format!(

@@ -99,7 +99,9 @@ impl MuxStream {
 
     /// 刷新写入缓冲区（发送 Data 帧）
     fn flush_write(&self) {
-        let mut buf = self.write_buf.lock().unwrap();
+        let mut buf = self.write_buf.lock()
+            .expect("Mutex 不应被毒化 (write_buf)");
+
         if buf.is_empty() {
             return;
         }
@@ -112,8 +114,11 @@ impl MuxStream {
 
     /// 从内部缓冲区读取数据到输出缓冲区
     fn drain_buf(&self, out: &mut ReadBuf<'_>) -> usize {
-        let mut buf = self.read_buf.lock().unwrap();
-        let mut pos = self.read_pos.lock().unwrap();
+        let mut buf = self.read_buf.lock()
+            .expect("Mutex 不应被毒化 (read_buf)");
+        let mut pos = self.read_pos.lock()
+            .expect("Mutex 不应被毒化 (read_pos)");
+
 
         if *pos >= buf.len() {
             return 0;
@@ -150,11 +155,15 @@ impl AsyncRead for MuxStream {
         }
 
         // 尝试从通道接收新数据
-        let mut rx = self.rx.lock().unwrap();
+        let mut rx = self.rx.lock()
+            .expect("Mutex 不应被毒化 (rx)");
         match rx.try_recv() {
+
             Ok(data) => {
-                *self.read_buf.lock().unwrap() = data;
-                *self.read_pos.lock().unwrap() = 0;
+                *self.read_buf.lock()
+                    .expect("Mutex 不应被毒化 (read_buf)") = data;
+                *self.read_pos.lock()
+                    .expect("Mutex 不应被毒化 (read_pos)") = 0;
                 drop(rx);
                 self.drain_buf(buf);
                 std::task::Poll::Ready(Ok(()))
@@ -186,7 +195,8 @@ impl AsyncWrite for MuxStream {
             )));
         }
 
-        let mut write_buf = self.write_buf.lock().unwrap();
+        let mut write_buf = self.write_buf.lock()
+            .expect("Mutex 不应被毒化 (write_buf)");
         write_buf.extend_from_slice(buf);
 
         // 如果缓冲区超过阈值，自动刷新
@@ -269,10 +279,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Mux<S> {
         self.next_id += 2;
 
         let (tx, rx) = mpsc::unbounded_channel();
-        self.streams.lock().unwrap().insert(stream_id, tx);
+        self.streams.lock()
+            .expect("Mutex 不应被毒化 (streams)")
+            .insert(stream_id, tx);
 
-        let stream = MuxStream::new(stream_id, rx, self.action_tx.clone());
-        stream
+        
+        MuxStream::new(stream_id, rx, self.action_tx.clone())
     }
 
     /// 接受对端发起的流（服务端模式，等待 Open 帧）
@@ -281,7 +293,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Mux<S> {
     }
 
     /// 获取 action sender 的克隆（用于外部创建 MuxStream）
-    pub fn sender(&self) -> mpsc::UnboundedSender<MuxAction> {
+    pub(crate) fn sender(&self) -> mpsc::UnboundedSender<MuxAction> {
         self.action_tx.clone()
     }
 
@@ -327,7 +339,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Mux<S> {
                             let _ = Self::write_frame_raw(
                                 &mut self.stream, FrameType::Close, stream_id, &[]
                             ).await;
-                            streams.lock().unwrap().remove(&stream_id);
+                            streams.lock()
+                                .expect("Mutex 不应被毒化 (streams)")
+                                .remove(&stream_id);
                         }
                         None => break,
                     }
@@ -346,7 +360,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Mux<S> {
             }
         }
 
-        streams.lock().unwrap().clear();
+        streams.lock()
+            .expect("Mutex 不应被毒化 (streams)")
+            .clear();
         Ok(())
     }
 
@@ -448,18 +464,24 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Mux<S> {
         match frame_type {
             FrameType::Open => {
                 let (tx, rx) = mpsc::unbounded_channel();
-                streams.lock().unwrap().insert(stream_id, tx);
+                streams.lock()
+                    .expect("Mutex 不应被毒化 (streams)")
+                    .insert(stream_id, tx);
 
                 let stream = MuxStream::new(stream_id, rx, action_tx.clone());
                 let _ = accept_tx.send(stream);
             }
             FrameType::Data => {
-                if let Some(tx) = streams.lock().unwrap().get(&stream_id) {
+                if let Some(tx) = streams.lock()
+                    .expect("Mutex 不应被毒化 (streams)")
+                    .get(&stream_id) {
                     let _ = tx.send(payload);
                 }
             }
             FrameType::Close => {
-                streams.lock().unwrap().remove(&stream_id);
+                streams.lock()
+                    .expect("Mutex 不应被毒化 (streams)")
+                    .remove(&stream_id);
             }
             FrameType::Ping => {}
             FrameType::Pong => {}

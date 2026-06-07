@@ -44,10 +44,7 @@ impl Cracker for MongodbCracker {
                 match tokio::time::timeout(timeout, async {
                     match ClientOptions::parse(&connection_string).await {
                         Ok(opts) => {
-                            match Client::with_options(opts) {
-                                Ok(_) => true,
-                                Err(_) => false,
-                            }
+                            Client::with_options(opts).is_ok()
                         }
                         Err(_) => false,
                     }
@@ -75,10 +72,7 @@ impl MongodbCracker {
         match tokio::time::timeout(timeout, async {
             match ClientOptions::parse(&connection_string).await {
                 Ok(opts) => {
-                    match Client::with_options(opts) {
-                        Ok(_) => true,
-                        Err(_) => false,
-                    }
+                    Client::with_options(opts).is_ok()
                 }
                 Err(_) => false,
             }

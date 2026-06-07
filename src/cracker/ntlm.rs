@@ -127,10 +127,10 @@ fn get_nt_timestamp() -> u64 {
 
     // Unix epoch (1970) 到 NT epoch (1601) 的间隔: 11644473600 秒
     const EPOCH_DIFF_SECS: u64 = 11644473600;
-    let nt_ticks = (duration.as_secs() + EPOCH_DIFF_SECS) * 10_000_000
-        + duration.subsec_nanos() as u64 / 100;
+    
 
-    nt_ticks
+    (duration.as_secs() + EPOCH_DIFF_SECS) * 10_000_000
+        + duration.subsec_nanos() as u64 / 100
 }
 
 /// 生成 8 字节 Client Challenge（使用简单随机数）
@@ -575,7 +575,7 @@ fn h(x: u32, y: u32, z: u32) -> u32 {
 
 #[inline]
 fn rotate_left(x: u32, n: u32) -> u32 {
-    (x << n) | (x >> (32 - n))
+    x.rotate_left(n)
 }
 
 #[cfg(test)]

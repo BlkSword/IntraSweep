@@ -145,7 +145,7 @@ impl NetworkCollector {
         let mut arp_table = Vec::new();
 
         if let Ok(output) = Command::new("arp")
-            .args(&["-a"])
+            .args(["-a"])
             .output()
         {
             let content = String::from_utf8_lossy(&output.stdout);
@@ -176,7 +176,7 @@ impl NetworkCollector {
         let mut connections = Vec::new();
 
         if let Ok(output) = Command::new("netstat")
-            .args(&["-ano"])
+            .args(["-ano"])
             .output()
         {
             let content = String::from_utf8_lossy(&output.stdout);

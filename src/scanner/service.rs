@@ -81,14 +81,13 @@ impl ServiceIdentifier {
 
         // 根据端口发送探测数据
         let probe_data = Self::get_probe_data(port);
-        if !probe_data.is_empty() {
-            if timeout(self.banner_timeout, tokio::io::AsyncWriteExt::write_all(&mut stream, probe_data.as_bytes()))
+        if !probe_data.is_empty()
+            && timeout(self.banner_timeout, tokio::io::AsyncWriteExt::write_all(&mut stream, probe_data.as_bytes()))
                 .await
                 .is_err()
             {
                 // 写入失败，继续尝试读取
             }
-        }
 
         // 读取响应
         let mut buffer = vec![0u8; 4096];
@@ -229,8 +228,8 @@ impl ServiceIdentifier {
         }
 
         // POP3
-        if port == 110 {
-            if banner_lower.contains("pop3") || banner.starts_with('+') {
+        if port == 110
+            && (banner_lower.contains("pop3") || banner.starts_with('+')) {
                 info.product = "POP3".to_string();
                 if banner_lower.contains("dovecot") {
                     info.product = "Dovecot POP3".to_string();
@@ -240,11 +239,10 @@ impl ServiceIdentifier {
                     info.product = "Microsoft Exchange POP3".to_string();
                 }
             }
-        }
 
         // IMAP
-        if port == 143 {
-            if banner_lower.contains("imap") || banner.starts_with('*') {
+        if port == 143
+            && (banner_lower.contains("imap") || banner.starts_with('*')) {
                 info.product = "IMAP".to_string();
                 if banner_lower.contains("dovecot") {
                     info.product = "Dovecot IMAP".to_string();
@@ -259,7 +257,6 @@ impl ServiceIdentifier {
                     info.version = remaining.split_whitespace().next().unwrap_or("").to_string();
                 }
             }
-        }
 
         // 数据库服务
         if port == 3306 {
@@ -304,8 +301,8 @@ impl ServiceIdentifier {
         }
 
         // VNC
-        if port == 5900 {
-            if banner_lower.contains("rfb") {
+        if port == 5900
+            && banner_lower.contains("rfb") {
                 info.product = "VNC".to_string();
                 // RFB 协议版本: RFB 003.008
                 if let Some(pos) = banner.find("RFB ") {
@@ -313,7 +310,6 @@ impl ServiceIdentifier {
                     info.version = remaining.split_whitespace().next().unwrap_or("").to_string();
                 }
             }
-        }
 
         // RDP
         if port == 3389 {
@@ -378,11 +374,10 @@ impl ServiceIdentifier {
         }
 
         // 通用 Telnet 检测
-        if port == 23 {
-            if banner_lower.contains("login:") {
+        if port == 23
+            && banner_lower.contains("login:") {
                 info.product = "Telnet".to_string();
             }
-        }
     }
 
     /// 解析 HTTP Banner
@@ -438,7 +433,7 @@ impl ServiceIdentifier {
     }
 
     /// 解析 SSH Banner
-    fn parse_ssh_banner(info: &mut ServiceInfo, banner: &str, banner_lower: &str) {
+    fn parse_ssh_banner(info: &mut ServiceInfo, banner: &str, _banner_lower: &str) {
         if banner.contains("SSH-") {
             info.product = "SSH".to_string();
             if let Some(pos) = banner.find("SSH-") {
@@ -518,7 +513,7 @@ impl ServiceIdentifier {
         for ver_prefix in &["5.0", "5.1", "5.5", "5.6", "5.7", "8.0", "8.1", "8.2", "8.3", "8.4"] {
             if let Some(pos) = banner_lower.find(*ver_prefix) {
                 let remaining = &banner_lower[pos..];
-                if let Some(end) = remaining.find(|c: char| c == '\n' || c == '\r' || c == '\0') {
+                if let Some(end) = remaining.find(['\n', '\r', '\0']) {
                     info.version = remaining[..end].to_string();
                 } else {
                     info.version = remaining.to_string();

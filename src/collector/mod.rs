@@ -99,7 +99,6 @@ impl InfoCollector {
         // 6. 收集密钥和令牌
         progress.start_task("收集SSH密钥和API令牌");
         progress.update_current("搜索AWS凭证");
-        let mut credential_report = credential_report;
         credential_report.tokens = self.credential.collect_tokens();
         progress.update_current("搜索SSH密钥");
         credential_report.ssh_keys = self.credential.collect_ssh_keys();
@@ -254,11 +253,72 @@ pub fn save_report(report: &SystemReport, output_path: Option<PathBuf>) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::models::*;
+    use crate::modules::collect::*;
+
+    // === 辅助函数 ===
+
+    fn make_process(name: &str, cpu: f32, memory: u64) -> ProcessInfo {
+        ProcessInfo {
+            pid: 1,
+            name: name.to_string(),
+            exe: format!("/usr/bin/{}", name),
+            cmd: format!("{} --daemon", name),
+            cpu_usage: cpu,
+            memory_usage: memory,
+            parent: Some(1),
+            start_time: 1000,
+            environ: vec!["PATH=/usr/bin".to_string()],
+        }
+    }
+
+    fn make_interface(name: &str, ip: &str) -> NetworkInterface {
+        NetworkInterface {
+            name: name.to_string(),
+            ip: ip.to_string(),
+            netmask: "255.255.255.0".to_string(),
+            mac: Some("00:11:22:33:44:55".to_string()),
+            ipv6: None,
+            is_up: true,
+            gateway: Some("192.168.1.1".to_string()),
+            dns_servers: vec!["8.8.8.8".to_string()],
+        }
+    }
+
+    fn make_route(dest: &str) -> RouteEntry {
+        RouteEntry {
+            destination: dest.to_string(),
+            gateway: "192.168.1.1".to_string(),
+            netmask: "255.255.255.0".to_string(),
+            metric: 100,
+            interface: "eth0".to_string(),
+        }
+    }
+
+    fn make_hash_entry(username: &str, hash: &str) -> HashEntry {
+        HashEntry {
+            hash_type: "SHA-256".to_string(),
+            location: "/etc/shadow".to_string(),
+            username: username.to_string(),
+            hash: hash.to_string(),
+        }
+    }
+
+    fn make_sensitive_file(path: &str, size: u64) -> SensitiveFile {
+        SensitiveFile {
+            path: path.to_string(),
+            file_name: path.rsplit('/').next().unwrap_or(path).to_string(),
+            category: "测试".to_string(),
+            size,
+            modified: None,
+        }
+    }
+
+    // === 现有测试 ===
 
     #[test]
     fn test_collector_creation() {
         let collector = InfoCollector::new();
-        // 验证创建成功
         assert!(true);
     }
 
@@ -267,5 +327,253 @@ mod tests {
         let filename = generate_output_filename("test-host");
         assert!(filename.starts_with("intrasweep-test-host-"));
         assert!(filename.ends_with(".json"));
+    }
+
+    #[test]
+    fn test_generate_output_filename_empty() {
+        let filename = generate_output_filename("");
+        assert!(filename.starts_with("intrasweep--"));
+        assert!(filename.ends_with(".json"));
+    }
+
+    #[test]
+    fn test_generate_output_filename_special_chars() {
+        let filename = generate_output_filename("host.name");
+        assert!(filename.contains("host.name"));
+    }
+
+    // === NetworkReport::update_stats ===
+
+    #[test]
+    fn test_network_report_update_stats() {
+        let mut report = NetworkReport::default();
+        report.interfaces = vec![make_interface("eth0", "10.0.0.1"), make_interface("eth1", "192.168.1.1")];
+        report.routes = vec![make_route("0.0.0.0"), make_route("10.0.0.0"), make_route("192.168.1.0")];
+        report.arp_table = vec![ArpEntry {
+            ip: "192.168.1.5".to_string(), mac: "aa:bb:cc:dd:ee:ff".to_string(),
+            interface: "eth0".to_string(), interface_ip: Some("10.0.0.1".to_string()), state: "动态".to_string(),
+        }];
+        report.connections = vec![NetworkConnection {
+            protocol: "TCP".to_string(), local_addr: "10.0.0.1".to_string(), local_port: 22,
+            remote_addr: "10.0.0.100".to_string(), remote_port: 54321, state: "ESTABLISHED".to_string(), pid: Some(1234),
+        }];
+
+        report.update_stats();
+
+        assert_eq!(report.stats.interface_count, 2);
+        assert_eq!(report.stats.route_count, 3);
+        assert_eq!(report.stats.arp_count, 1);
+        assert_eq!(report.stats.connection_count, 1);
+    }
+
+    #[test]
+    fn test_network_report_update_stats_empty() {
+        let mut report = NetworkReport::default();
+        report.update_stats();
+        assert_eq!(report.stats.interface_count, 0);
+        assert_eq!(report.stats.route_count, 0);
+        assert_eq!(report.stats.arp_count, 0);
+        assert_eq!(report.stats.connection_count, 0);
+    }
+
+    // === ProcessReport::update_stats ===
+
+    #[test]
+    fn test_process_report_update_stats_suspicious() {
+        let mut report = ProcessReport::default();
+        report.processes = vec![
+            make_process("nc", 5.0, 10_000_000),
+            make_process("nginx", 10.0, 100_000_000),
+            make_process("meterpreter", 20.0, 50_000_000),
+        ];
+        report.update_stats();
+
+        assert_eq!(report.suspicious.len(), 2);
+        assert!(report.suspicious.iter().any(|p| p.name == "nc"));
+        assert!(report.suspicious.iter().any(|p| p.name == "meterpreter"));
+        assert!(!report.suspicious.iter().any(|p| p.name == "nginx"));
+    }
+
+    #[test]
+    fn test_process_report_update_stats_high_cpu() {
+        let mut report = ProcessReport::default();
+        report.processes = vec![
+            make_process("idle", 5.0, 10_000_000),
+            make_process("busy1", 55.0, 500_000_000),
+            make_process("busy2", 90.0, 100_000_000),
+        ];
+        report.update_stats();
+
+        assert_eq!(report.high_cpu.len(), 2);
+        assert!(report.high_cpu.iter().any(|p| p.name == "busy1"));
+        assert!(report.high_cpu.iter().any(|p| p.name == "busy2"));
+        assert!(!report.high_cpu.iter().any(|p| p.name == "idle"));
+    }
+
+    #[test]
+    fn test_process_report_update_stats_high_memory() {
+        let mut report = ProcessReport::default();
+        report.processes = vec![
+            make_process("small", 1.0, 500_000_000),
+            make_process("medium", 5.0, 1024 * 1024 * 1024),  // 刚好等于阈值
+            make_process("big", 10.0, 2 * 1024 * 1024 * 1024),
+        ];
+        report.update_stats();
+
+        // high_memory 检查 > 1024^3，不包含刚好等于阈值的
+        assert_eq!(report.high_memory.len(), 1);
+        assert!(report.high_memory.iter().any(|p| p.name == "big"));
+    }
+
+    #[test]
+    fn test_process_report_update_stats_empty() {
+        let mut report = ProcessReport::default();
+        report.update_stats();
+        assert_eq!(report.suspicious.len(), 0);
+        assert_eq!(report.high_cpu.len(), 0);
+        assert_eq!(report.high_memory.len(), 0);
+    }
+
+    #[test]
+    fn test_process_report_case_insensitive_suspicious() {
+        let mut report = ProcessReport::default();
+        report.processes = vec![
+            make_process("PowerShell", 5.0, 10_000_000),  // 混合大小写
+            make_process("PWSH", 5.0, 10_000_000),        // 大写
+        ];
+        report.update_stats();
+        assert_eq!(report.suspicious.len(), 2);
+    }
+
+    // === CredentialReport::update_stats ===
+
+    #[test]
+    fn test_credential_report_update_stats() {
+        let mut report = CredentialReport::default();
+        report.password_hashes = vec![
+            make_hash_entry("root", "abc123"),
+            make_hash_entry("admin", "def456"),
+        ];
+        report.tokens = vec![Token {
+            token_type: "Bearer".to_string(), location: "/home/user/.config".to_string(), content: "tok_xxx".to_string(),
+        }];
+        report.ssh_keys = vec![
+            SshKey { key_type: "RSA".to_string(), path: "/root/.ssh/id_rsa".to_string(), fingerprint: Some("SHA256:aaa".to_string()) },
+            SshKey { key_type: "ED25519".to_string(), path: "/root/.ssh/id_ed25519".to_string(), fingerprint: None },
+        ];
+        report.api_keys = vec![
+            ApiKey { service: "AWS".to_string(), location: "~/.aws/credentials".to_string(), redacted: true, key_value: None },
+            ApiKey { service: "GitHub".to_string(), location: "~/.gitconfig".to_string(), redacted: false, key_value: Some("ghp_xxx".to_string()) },
+            ApiKey { service: "Docker".to_string(), location: "~/.docker/config.json".to_string(), redacted: true, key_value: None },
+        ];
+
+        report.update_stats();
+
+        assert_eq!(report.stats.hash_count, 2);
+        assert_eq!(report.stats.token_count, 1);
+        assert_eq!(report.stats.ssh_key_count, 2);
+        assert_eq!(report.stats.api_key_count, 3);
+    }
+
+    #[test]
+    fn test_credential_report_update_stats_empty() {
+        let mut report = CredentialReport::default();
+        report.update_stats();
+        assert_eq!(report.stats.hash_count, 0);
+        assert_eq!(report.stats.token_count, 0);
+        assert_eq!(report.stats.ssh_key_count, 0);
+        assert_eq!(report.stats.api_key_count, 0);
+    }
+
+    // === FileReport::update_stats ===
+
+    #[test]
+    fn test_file_report_update_stats() {
+        let mut report = FileReport::default();
+        report.sensitive_files = vec![
+            make_sensitive_file("/etc/shadow", 1024),
+            make_sensitive_file("/etc/sudoers", 2048),
+        ];
+        report.config_files = vec![
+            ConfigFile { path: "/etc/nginx/nginx.conf".to_string(), file_name: "nginx.conf".to_string(), config_type: "nginx".to_string(), size: 512 },
+        ];
+
+        report.update_stats();
+
+        assert_eq!(report.stats.sensitive_count, 2);
+        assert_eq!(report.stats.config_count, 1);
+        assert_eq!(report.stats.recent_count, 0);
+        assert_eq!(report.stats.sensitive_total_size, 3072);
+    }
+
+    #[test]
+    fn test_file_report_update_stats_empty() {
+        let mut report = FileReport::default();
+        report.update_stats();
+        assert_eq!(report.stats.sensitive_count, 0);
+        assert_eq!(report.stats.config_count, 0);
+        assert_eq!(report.stats.recent_count, 0);
+        assert_eq!(report.stats.sensitive_total_size, 0);
+    }
+
+    // === ReportMetadata ===
+
+    #[test]
+    fn test_report_metadata_construction() {
+        let meta = ReportMetadata {
+            hostname: "test-server".to_string(),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            collection_duration_secs: 12.5,
+            collector_version: "0.3.0".to_string(),
+            os_type: "Linux".to_string(),
+            arch: "x86_64".to_string(),
+        };
+        assert_eq!(meta.hostname, "test-server");
+        assert_eq!(meta.os_type, "Linux");
+        assert_eq!(meta.collection_duration_secs, 12.5);
+    }
+
+    // === JSON 序列化 ===
+
+    #[test]
+    fn test_network_report_json_roundtrip() {
+        let mut report = NetworkReport::default();
+        report.interfaces = vec![make_interface("eth0", "10.0.0.1")];
+        report.update_stats();
+
+        let json = serde_json::to_string(&report).expect("序列化应成功");
+        let deserialized: NetworkReport = serde_json::from_str(&json).expect("反序列化应成功");
+
+        assert_eq!(deserialized.interfaces.len(), 1);
+        assert_eq!(deserialized.interfaces[0].name, "eth0");
+        assert_eq!(deserialized.stats.interface_count, 1);
+    }
+
+    #[test]
+    fn test_process_report_json_roundtrip() {
+        let mut report = ProcessReport::default();
+        report.processes = vec![make_process("ssh", 0.1, 5_000_000)];
+        report.update_stats();
+
+        let json = serde_json::to_string(&report).expect("序列化应成功");
+        let deserialized: ProcessReport = serde_json::from_str(&json).expect("反序列化应成功");
+
+        assert_eq!(deserialized.processes.len(), 1);
+        assert_eq!(deserialized.processes[0].name, "ssh");
+    }
+
+    #[test]
+    fn test_recent_file_construction() {
+        let file = RecentFile {
+            path: "/tmp/test.log".to_string(),
+            name: "test.log".to_string(),
+            size: 4096,
+            modified: "2024-01-01 00:00:00".to_string(),
+            is_sensitive: true,
+        };
+        assert_eq!(file.path, "/tmp/test.log");
+        assert_eq!(file.name, "test.log");
+        assert_eq!(file.size, 4096);
+        assert!(file.is_sensitive);
     }
 }

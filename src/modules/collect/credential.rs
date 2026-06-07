@@ -297,7 +297,7 @@ impl CredentialCollector {
         let hash = Sha256::digest(&decoded);
 
         // 编码为 base64 并去掉末尾 '='
-        let b64 = BASE64_STANDARD.encode(&hash);
+        let b64 = BASE64_STANDARD.encode(hash);
         let trimmed = b64.trim_end_matches('=');
 
         Some(format!("SHA256:{}", trimmed))
@@ -338,7 +338,7 @@ impl CredentialCollector {
             // 解析 RID
             let rid = u32::from_str_radix(&subkey_name, 16).unwrap_or(0);
             // 跳过内置账户 (RID < 1000)
-            if rid < 1000 || rid > 0xFFFF {
+            if !(1000..=0xFFFF).contains(&rid) {
                 continue;
             }
 

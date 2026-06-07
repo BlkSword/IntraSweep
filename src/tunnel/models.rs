@@ -162,16 +162,10 @@ impl TunnelStatus {
     /// 获取运行时间
     #[allow(dead_code)]
     pub fn uptime(&self) -> Option<Duration> {
-        if let Some(started) = self.started_at {
-            Some(
-                chrono::Utc::now()
+        self.started_at.map(|started| chrono::Utc::now()
                     .signed_duration_since(started)
                     .to_std()
-                    .unwrap_or_default(),
-            )
-        } else {
-            None
-        }
+                    .unwrap_or_default())
     }
 
     /// 格式化运行时间

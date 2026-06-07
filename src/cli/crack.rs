@@ -21,8 +21,9 @@ pub fn run_crack_cmd(
     timeout: u64,
     delay: Option<u64>,
 ) -> Result<()> {
-    if target.is_none() {
-        run_interactive_crack(
+    match target {
+        Some(target) => run_crack(
+            target,
             port,
             service,
             usernames,
@@ -31,10 +32,8 @@ pub fn run_crack_cmd(
             concurrency,
             timeout,
             delay,
-        )
-    } else {
-        run_crack(
-            target.unwrap(),
+        ),
+        None => run_interactive_crack(
             port,
             service,
             usernames,
@@ -43,7 +42,7 @@ pub fn run_crack_cmd(
             concurrency,
             timeout,
             delay,
-        )
+        ),
     }
 }
 
@@ -51,9 +50,9 @@ pub fn run_crack_cmd(
 fn run_interactive_crack(
     initial_port: Option<u16>,
     initial_service: Option<String>,
-    initial_usernames: Option<String>,
+    _initial_usernames: Option<String>,
     initial_password_file: Option<String>,
-    initial_username_file: Option<String>,
+    _initial_username_file: Option<String>,
     initial_concurrency: usize,
     initial_timeout: u64,
     initial_delay: Option<u64>,

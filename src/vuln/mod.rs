@@ -136,7 +136,7 @@ impl VulnScanner {
                 findings.push(result);
             }
             completed += 1;
-            if completed % 50 == 0 || completed == total {
+            if completed.is_multiple_of(50) || completed == total {
                 tracing::debug!(
                     "漏洞扫描进度: {}/{} ({:.1}%)",
                     completed,

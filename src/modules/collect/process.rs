@@ -90,7 +90,7 @@ impl ProcessCollector {
             // Windows: 使用 tasklist /FI /V 获取进程所有者
             use std::process::Command;
             if let Ok(output) = Command::new("tasklist")
-                .args(&["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/V"])
+                .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/V"])
                 .output()
             {
                 let content = String::from_utf8_lossy(&output.stdout);
@@ -142,7 +142,7 @@ impl ProcessCollector {
             // Windows: 使用 wmic 获取线程数
             use std::process::Command;
             if let Ok(output) = Command::new("wmic")
-                .args(&["process", "where", &format!("ProcessId={}", pid), "get", "ThreadCount", "/value"])
+                .args(["process", "where", &format!("ProcessId={}", pid), "get", "ThreadCount", "/value"])
                 .output()
             {
                 let content = String::from_utf8_lossy(&output.stdout);

@@ -21,7 +21,6 @@ pub mod socks5;
 
 pub use chain::ChainTunnel;
 pub use config::{TunnelConfig, TunnelType};
-pub use crypto::{CryptoLayer, EncryptedStream, derive_key};
 pub use forward::ForwardTunnel;
 pub use models::{LogEventHandler, TunnelEventHandler};
 pub use reverse::ReverseTunnel;

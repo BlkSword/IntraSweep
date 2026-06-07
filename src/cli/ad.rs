@@ -18,14 +18,13 @@ pub fn run_ad_cmd(
     format: &str,
     output: Option<PathBuf>,
 ) -> Result<()> {
-    let output_fmt = OutputFormat::from_str(format)
+    let output_fmt = OutputFormat::parse(format)
         .unwrap_or(OutputFormat::Json);
 
     // 无参数时进入交互式模式
-    let (dc, domain, username, password, ssl, mode, bloodhound_dir) = if dc.is_none() || domain.is_none() {
-        run_interactive_ad(dc, domain, username, password, ssl, mode, bloodhound_dir)?
-    } else {
-        (dc.unwrap(), domain.unwrap(), username, password, ssl, mode, bloodhound_dir)
+    let (dc, domain, username, password, ssl, mode, bloodhound_dir) = match (dc, domain) {
+        (Some(dc), Some(domain)) => (dc, domain, username, password, ssl, mode, bloodhound_dir),
+        (dc_opt, domain_opt) => run_interactive_ad(dc_opt, domain_opt, username, password, ssl, mode, bloodhound_dir)?,
     };
 
     let ad_label = "AD域枚举";
@@ -274,7 +273,7 @@ fn print_ad_enum_results(result: &crate::ad::AdEnumResult) {
         }
     }
 
-    println!("{}{}\n", "╚", "═".repeat(69));
+    println!("╚{}\n", "═".repeat(69));
 }
 
 fn print_kerberoast_results(targets: &[crate::ad::KerberoastTarget]) {
@@ -289,7 +288,7 @@ fn print_kerberoast_results(targets: &[crate::ad::KerberoastTarget]) {
     if targets.len() > 20 {
         println!("║  ... 还有 {} 个目标", targets.len() - 20);
     }
-    println!("{}{}\n", "╚", "═".repeat(69));
+    println!("╚{}\n", "═".repeat(69));
 }
 
 fn print_asrep_results(targets: &[crate::ad::AsrepTarget]) {
@@ -300,5 +299,5 @@ fn print_asrep_results(targets: &[crate::ad::AsrepTarget]) {
         let status = if t.enabled { "启用" } else { "禁用" };
         println!("║  {} ({})", t.username, status);
     }
-    println!("{}{}\n", "╚", "═".repeat(69));
+    println!("╚{}\n", "═".repeat(69));
 }

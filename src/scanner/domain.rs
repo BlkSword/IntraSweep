@@ -168,7 +168,7 @@ impl DomainScanner {
 
             // 使用nltest查找域控制器
             if let Ok(output) = Command::new("nltest")
-                .args(&["/dclist:", domain])
+                .args(["/dclist:", domain])
                 .output()
             {
                 let content = String::from_utf8_lossy(&output.stdout);
@@ -184,7 +184,7 @@ impl DomainScanner {
 
             // 使用nslookup查询
             if let Ok(output) = Command::new("nslookup")
-                .args(&["-type=SRV", "_ldap._tcp.dc._msdcs.", domain])
+                .args(["-type=SRV", "_ldap._tcp.dc._msdcs.", domain])
                 .output()
             {
                 let content = String::from_utf8_lossy(&output.stdout);
@@ -238,7 +238,7 @@ impl DomainScanner {
 
         // 使用net user命令
         if let Ok(output) = Command::new("net")
-            .args(&["user", "/domain"])
+            .args(["user", "/domain"])
             .output()
         {
             let content = String::from_utf8_lossy(&output.stdout);
@@ -280,7 +280,7 @@ impl DomainScanner {
 
             // 查询域管理员组
             if let Ok(output) = Command::new("net")
-                .args(&["group", "\"Domain Admins\"", "/domain"])
+                .args(["group", "\"Domain Admins\"", "/domain"])
                 .output()
             {
                 let content = String::from_utf8_lossy(&output.stdout);
@@ -317,7 +317,7 @@ impl DomainScanner {
             let trusts = Vec::new();
 
             if let Ok(output) = Command::new("nltest")
-                .args(&["/domain_trusts"])
+                .args(["/domain_trusts"])
                 .output()
             {
                 let content = String::from_utf8_lossy(&output.stdout);
@@ -348,7 +348,7 @@ impl DomainScanner {
 
             // 使用setspn命令查询服务主体名称
             if let Ok(output) = Command::new("setspn")
-                .args(&["-q", "*/*"])
+                .args(["-q", "*/*"])
                 .output()
             {
                 let content = String::from_utf8_lossy(&output.stdout);
@@ -397,7 +397,7 @@ impl DomainScanner {
             let policy = PasswordPolicy::default();
 
             if let Ok(output) = Command::new("net")
-                .args(&["accounts"])
+                .args(["accounts"])
                 .output()
             {
                 let content = String::from_utf8_lossy(&output.stdout);
@@ -453,6 +453,7 @@ pub struct DomainScanResult {
 
 /// 密码策略
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct PasswordPolicy {
     pub max_password_age: Option<u32>,
     pub min_password_age: Option<u32>,
@@ -462,18 +463,6 @@ pub struct PasswordPolicy {
     pub lockout_duration: Option<u32>,
 }
 
-impl Default for PasswordPolicy {
-    fn default() -> Self {
-        Self {
-            max_password_age: None,
-            min_password_age: None,
-            min_password_length: None,
-            password_history: None,
-            lockout_threshold: None,
-            lockout_duration: None,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -163,7 +163,8 @@ impl PortScanner {
         semaphore: Arc<Semaphore>,
     ) -> PortInfo {
         // 获取信号量许可
-        let _permit = semaphore.acquire().await.unwrap();
+        let _permit = semaphore.acquire().await
+            .expect("Semaphore 不应在扫描进行中被关闭");
 
         let addr = SocketAddr::new(host, port);
         let result = timeout(timeout_dur, TcpStream::connect(&addr)).await;
@@ -242,7 +243,8 @@ impl PortScanner {
             let progress_cb = self.progress_callback.clone();
 
             let task = tokio::spawn(async move {
-                let _permit = semaphore.acquire().await.unwrap();
+                let _permit = semaphore.acquire().await
+                    .expect("Semaphore 不应在扫描进行中被关闭");
                 let scanner = PortScanner::new(config);
                 let result = scanner.scan_host_ports(host, ports_clone).await;
 

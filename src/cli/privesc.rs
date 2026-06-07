@@ -11,14 +11,13 @@ pub fn run_privesc_cmd(
     format: &str,
     output: Option<PathBuf>,
 ) -> Result<()> {
-    let output_fmt = OutputFormat::from_str(format)
+    let output_fmt = OutputFormat::parse(format)
         .unwrap_or(OutputFormat::Json);
 
     // 无参数时进入交互式模式
-    let selected = if check.is_none() {
-        run_interactive_privesc()?
-    } else {
-        check.unwrap()
+    let selected = match check {
+        Some(check) => check,
+        None => run_interactive_privesc()?,
     };
 
     print_banner();
@@ -131,24 +130,23 @@ fn print_privesc_results(result: &crate::privesc::PrivescResult) {
     let stats = &result.stats;
     println!("  发现风险: {}", stats.total_checks);
     if stats.critical_count > 0 {
-        println!("  {}{}严重: {}{}", "\x1b[31m", "■", stats.critical_count, "\x1b[0m");
+        println!("  \x1b[31m■严重: {}\x1b[0m", stats.critical_count);
     }
     if stats.high_count > 0 {
-        println!("  {}{}高危: {}{}", "\x1b[33m", "■", stats.high_count, "\x1b[0m");
+        println!("  \x1b[33m■高危: {}\x1b[0m", stats.high_count);
     }
     if stats.medium_count > 0 {
-        println!("  {}{}中危: {}{}", "\x1b[36m", "■", stats.medium_count, "\x1b[0m");
+        println!("  \x1b[36m■中危: {}\x1b[0m", stats.medium_count);
     }
     println!();
 
     // 详细发现
     for finding in &result.findings {
-        println!("  {}[{}] {} [{}]{}",
+        println!("  {}[{}] {} [{}]\x1b[0m",
             finding.severity.color_code(),
             finding.severity.display_name(),
             finding.title,
-            finding.category,
-            "\x1b[0m");
+            finding.category);
         if !finding.description.is_empty() {
             println!("    {}", finding.description);
         }

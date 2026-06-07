@@ -79,7 +79,7 @@ struct System;
 impl System {
     fn os_version() -> String {
         let output = Command::new("cmd")
-            .args(&["/C", "ver"])
+            .args(["/C", "ver"])
             .output();
         match output {
             Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
@@ -90,7 +90,7 @@ impl System {
 
 fn check_admin() -> bool {
     Command::new("net")
-        .args(&["session"])
+        .args(["session"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -222,7 +222,7 @@ fn check_writable_service_binaries() -> Vec<PrivescFinding> {
 
         // 检查文件是否可写
         if let Ok(metadata) = std::fs::metadata(&path) {
-            if metadata.permissions().readonly() == false {
+            if !metadata.permissions().readonly() {
                 // 进一步检查是否在系统目录
                 if !path.to_lowercase().starts_with("c:\\windows\\") {
                     findings.push(PrivescFinding {
@@ -300,7 +300,7 @@ fn check_auto_logon() -> Vec<PrivescFinding> {
                 severity: PrivescSeverity::Critical,
                 title: "自动登录密码泄露".to_string(),
                 description: "注册表中存储了自动登录的明文密码".to_string(),
-                detail: format!("注册表路径: HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\DefaultPassword"),
+                detail: "注册表路径: HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\DefaultPassword".to_string(),
                 remediation: "删除 DefaultPassword 注册表值，禁用自动登录".to_string(),
             });
         }

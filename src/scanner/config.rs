@@ -325,7 +325,7 @@ pub enum ScanPreset {
 
 impl ScanPreset {
     /// 获取对应的配置
-    pub fn to_config(&self) -> ScanConfig {
+    pub fn to_config(self) -> ScanConfig {
         match self {
             ScanPreset::Fast => ScanConfig::fast_scan(),
             ScanPreset::Standard => ScanConfig::default(),

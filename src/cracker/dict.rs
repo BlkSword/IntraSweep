@@ -1,6 +1,6 @@
 //! 字典管理模块
 
-#![allow(dead_code)]
+#![allow(dead_code, clippy::lines_filter_map_ok)]
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -92,11 +92,11 @@ impl DictManager {
         }
 
         // 尝试打开文件并计数条目
-        let file = File::open(&path_ref).context("无法打开字典文件")?;
+        let file = File::open(path_ref).context("无法打开字典文件")?;
         let reader = BufReader::new(file);
         let count = reader
             .lines()
-            .filter_map(|line| line.ok())
+            .flatten()
             .map(|line| line.trim().to_string())
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
             .count();
@@ -123,7 +123,7 @@ impl DictManager {
 
         let usernames: Vec<String> = reader
             .lines()
-            .filter_map(|line| line.ok())
+            .flatten()
             .map(|line| line.trim().to_string())
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
             .collect();
@@ -152,7 +152,7 @@ impl DictManager {
 
         let passwords: Vec<String> = reader
             .lines()
-            .filter_map(|line| line.ok())
+            .flatten()
             .map(|line| line.trim().to_string())
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
             .collect();

@@ -1,5 +1,8 @@
 //! IntraSweep - 内网渗透辅助工具
 
+// 二进制入口有独立的模块树，与 lib.rs 的 API 层分开编译
+#![allow(dead_code, clippy::too_many_arguments)]
+
 mod ad;
 mod cli;
 mod collector;

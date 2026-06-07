@@ -255,8 +255,7 @@ fn extract_ntlm_challenge(response: &str) -> Option<Vec<u8>> {
             let value = value.trim();
 
             // 格式: NTLM <base64>
-            if value.starts_with("NTLM ") {
-                let b64 = &value[5..];
+            if let Some(b64) = value.strip_prefix("NTLM ") {
                 return base64_decode_bytes(b64);
             }
             // 有些服务器直接返回 base64
