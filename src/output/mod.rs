@@ -5,3 +5,4 @@
 pub mod color;
 pub mod format;
 pub mod progress;
+pub mod topology;

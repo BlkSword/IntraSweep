@@ -6,5 +6,7 @@ pub mod config;
 pub mod error;
 pub mod log;
 pub mod obfstr;
+pub mod plugin;
+pub mod vault;
 
 pub use error::Result;

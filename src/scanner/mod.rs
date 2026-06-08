@@ -18,7 +18,7 @@ pub mod arp;
 
 pub use config::{ScanConfig, ScanPreset, HostScanMethod, PortScanMethod};
 pub use host::HostScanner;
-pub use models::{ScanResult, ScanStats, ScanType};
+pub use models::{HostResult, ScanResult, ScanStats, ScanType};
 pub use port::{PortScanner, ProgressCallback};
 
 use chrono::Utc;

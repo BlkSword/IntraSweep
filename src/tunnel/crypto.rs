@@ -50,7 +50,7 @@ impl CryptoLayer {
     }
 
     /// 解密帧，输入不含 4 字节长度前缀
-    fn decrypt_frame(&self, nonce_and_ct: &[u8]) -> io::Result<Vec<u8>> {
+    pub fn decrypt_frame(&self, nonce_and_ct: &[u8]) -> io::Result<Vec<u8>> {
         if nonce_and_ct.len() < 24 + 16 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

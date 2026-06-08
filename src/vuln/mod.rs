@@ -8,6 +8,7 @@ pub mod loader;
 pub mod matchers;
 pub mod poc;
 pub mod script;
+pub mod webprobe;
 
 use chrono::{DateTime, Utc};
 use poc::{PoCRule, Severity, Transport};

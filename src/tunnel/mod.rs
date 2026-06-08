@@ -5,13 +5,19 @@
 //! - 反向 TCP 端口转发
 //! - SOCKS5 代理
 //! - 多级跳板链式隧道
+//! - HTTP/HTTPS 隧道（HTTP CONNECT 代理穿透）
+//! - DNS 隧道（DNS 查询数据外传）
 //! - XChaCha20-Poly1305 加密传输
 //! - 连接多路复用
+//! - C2 命令与控制框架
 
+pub mod c2;
 pub mod chain;
 pub mod config;
 pub mod crypto;
+pub mod dns;
 pub mod forward;
+pub mod http;
 pub mod models;
 pub mod mux;
 pub mod relay;
