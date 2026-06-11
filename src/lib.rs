@@ -6,13 +6,19 @@
 #![allow(dead_code)]
 
 pub mod ad;
+pub mod attack_path;
 pub mod cli;
 pub mod collector;
 pub mod core;
 pub mod cracker;
+pub mod cred;
+pub mod evasion;
+pub mod lateral;
 pub mod modules;
 pub mod output;
+pub mod persist;
 pub mod privesc;
+pub mod recon;
 pub mod scanner;
 pub mod tunnel;
 pub mod vuln;

