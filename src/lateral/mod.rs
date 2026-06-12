@@ -23,7 +23,6 @@ pub mod winrm;
 pub mod wmi;
 
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 // ============================================================
 // 横向移动数据类型

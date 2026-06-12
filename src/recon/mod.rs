@@ -23,7 +23,6 @@ pub mod vlan;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 // ============================================================
 // 侦察结果

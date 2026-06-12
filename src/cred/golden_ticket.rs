@@ -506,7 +506,7 @@ pub fn inject_golden_ticket(ticket: &GoldenTicket) -> Result<String, String> {
         ticket.domain,
         ticket.username,
         ticket.domain_sid,
-        ticket.lifetime_days,
+        ticket.valid_until - ticket.valid_from,  // 有效期秒数转天数示意
         kirbi_path.display(),
         &ticket.ticket_base64[..std::cmp::min(80, ticket.ticket_base64.len())],
         kirbi_path.display(),

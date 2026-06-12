@@ -274,8 +274,8 @@ fn build_collection_flags(config: &BloodHoundCollectConfig) -> String {
     if config.collect_computers {
         flags.push("ComputerOnly");
     }
-    flags.push("Group".to_string());
-    flags.push("Trusts".to_string());
+    flags.push("Group");
+    flags.push("Trusts");
 
     flags.join(",")
 }
@@ -301,7 +301,7 @@ fn collect_users_json(
     base_dn: &str,
     include_sessions: bool,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let mut attrs = vec![
+    let attrs = vec![
         "sAMAccountName", "displayName", "distinguishedName", "description",
         "mail", "adminCount", "userAccountControl", "memberOf", "servicePrincipalName",
         "objectSid", "lastLogonTimestamp",
@@ -372,7 +372,7 @@ fn collect_computers_json(
     base_dn: &str,
     include_sessions: bool,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let mut attrs = vec![
+    let attrs = vec![
         "cn", "distinguishedName", "dNSHostName", "operatingSystem",
         "operatingSystemVersion", "userAccountControl",
     ];

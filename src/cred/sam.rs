@@ -9,7 +9,6 @@
 //! 3. 直接文件访问 (需要SYSTEM权限)
 
 use crate::cred::{Credential, CredType};
-use std::collections::HashMap;
 
 /// 从SAM文件提取密码哈希
 ///

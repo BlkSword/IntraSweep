@@ -144,11 +144,12 @@ impl AttackGraph {
                     }
                 }
                 steps.reverse();
+                let total = steps.len();
                 return Some(AttackPath {
                     steps,
-                    total_steps: steps.len(),
+                    total_steps: total,
                     risk_level: RiskLevel::Medium,
-                    estimated_time: format!("~{} 步", steps.len()),
+                    estimated_time: format!("~{} 步", total),
                 });
             }
 
@@ -516,7 +517,8 @@ mod tests {
 
         let path = graph.find_shortest_path("owned", "target");
         assert!(path.is_some());
-        assert_eq!(path.unwrap().total_steps, 1);
+        assert_eq!(path.unwrap().total_steps: steps.len(),  // compute before move
+                    path_steps: steps, 1);
     }
 
     #[test]

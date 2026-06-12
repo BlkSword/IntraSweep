@@ -207,7 +207,7 @@ impl Credential {
             CredType::KerberosTgs => {
                 // $krb5tgs$23$*username$domain$spn$hash
                 if let Some(ref attr) = self.attributes.get("hashcat_tgs") {
-                    Some(attr.clone())
+                    Some(attr.to_string())
                 } else {
                     None
                 }
@@ -215,7 +215,7 @@ impl Credential {
             CredType::KerberosAsrep => {
                 // $krb5asrep$23$*username$domain$hash
                 if let Some(ref attr) = self.attributes.get("hashcat_asrep") {
-                    Some(attr.clone())
+                    Some(attr.to_string())
                 } else {
                     None
                 }

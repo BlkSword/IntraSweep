@@ -8,7 +8,7 @@
 //! - Internet Explorer (legacy)
 
 use crate::cred::{Credential, CredType};
-use std::collections::HashMap;
+// 已移除未使用的 HashMap import
 use std::path::PathBuf;
 
 /// 浏览器密码条目
@@ -113,7 +113,7 @@ fn extract_chromium_passwords() -> Result<Vec<Credential>, String> {
                         credentials.extend(browser_creds);
                     }
                     Err(e) => {
-                        tracing::debug!("[浏览器密码] {} / {} 解析失败: {}", browser_name, e);
+                        tracing::debug!("[浏览器密码] {} / 解析失败: {}", browser_name, e);
                     }
                 }
             }
@@ -248,7 +248,7 @@ fn decrypt_chromium_password(encrypted: &[u8], key_hex: &str) -> Result<String, 
         .map_err(|e| format!("密钥解码失败: {}", e))?;
 
     // AES-256-GCM解密
-    use aes::Aes256;
+    // use aes::Aes256;
     use aes_gcm::{
         aead::{Aead, KeyInit},
         Aes256Gcm, Nonce,

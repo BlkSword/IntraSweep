@@ -360,6 +360,8 @@ pub fn search_files_by_keyword(
         max_files: usize,
         count: &mut usize,
         findings: &mut Vec<ShareFinding>,
+        base_path: &str,
+        keyword: &str,
     ) {
         if *count >= max_files {
             return;
@@ -378,7 +380,7 @@ pub fn search_files_by_keyword(
                             continue;
                         }
                     }
-                    search_dir(&path, keyword_lower, max_files, count, findings);
+                    search_dir(&path, keyword_lower, max_files, count, findings, base_path, keyword);
                 } else if path.is_file() {
                     if let Ok(metadata) = std::fs::metadata(&path) {
                         if metadata.len() < 1024 * 1024 {
@@ -411,6 +413,8 @@ pub fn search_files_by_keyword(
         max_files,
         &mut count,
         &mut findings,
+        base_path,
+        keyword,
     );
 
     Ok(findings)
