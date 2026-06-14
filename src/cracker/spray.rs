@@ -27,6 +27,8 @@ pub struct SprayConfig {
     pub passwords: Vec<String>,
     /// 每次喷射后的冷却时间（秒），用于重置锁计数器
     pub cooldown_secs: u64,
+    /// 账户锁定阈值（默认 5，AD 常见）。接近此阈值时冷却自动翻倍以防锁定
+    pub lock_threshold: usize,
     /// 连接超时
     pub timeout: Duration,
     /// 每次喷射的并发数
@@ -48,6 +50,7 @@ impl Default for SprayConfig {
                 "Welcome2024!".to_string(),
             ],
             cooldown_secs: 30,
+            lock_threshold: 5,
             timeout: Duration::from_secs(5),
             concurrency: 5,
             skip_found: true,
@@ -87,6 +90,12 @@ impl SprayConfig {
     /// 设置冷却时间
     pub fn with_cooldown(mut self, secs: u64) -> Self {
         self.cooldown_secs = secs;
+        self
+    }
+
+    /// 设置账户锁定阈值（接近时冷却自动翻倍）
+    pub fn with_lock_threshold(mut self, threshold: usize) -> Self {
+        self.lock_threshold = threshold;
         self
     }
 
@@ -163,13 +172,19 @@ impl SprayEngine {
 
         for (round, password) in self.config.passwords.iter().enumerate() {
             if round > 0 {
-                // 轮次间等待冷却
+                // 轮次间等待冷却（接近锁定阈值时自动翻倍）
+                let cooldown = self.current_cooldown(round);
                 tracing::info!(
-                    "[Spray] 轮次 {} 完成，等待 {}s 冷却...",
+                    "[Spray] 轮次 {} 完成，等待 {}s 冷却{}",
                     round,
-                    self.config.cooldown_secs
+                    cooldown,
+                    if cooldown > self.config.cooldown_secs {
+                        "（接近锁定阈值，冷却翻倍）"
+                    } else {
+                        "..."
+                    }
                 );
-                tokio::time::sleep(Duration::from_secs(self.config.cooldown_secs)).await;
+                tokio::time::sleep(Duration::from_secs(cooldown)).await;
             }
 
             tracing::info!(
@@ -231,8 +246,7 @@ impl SprayEngine {
 
             // 估计锁定数：失败的用户在下一轮将被锁定
             if failure_count > 0 {
-                let lock_threshold = 5; // 默认 AD 锁阈值
-                if self.config.passwords.len() >= lock_threshold {
+                if self.config.passwords.len() >= self.config.lock_threshold {
                     estimated_lockouts = failure_count;
                 }
             }
@@ -250,6 +264,19 @@ impl SprayEngine {
             elapsed_ms: elapsed,
             estimated_lockouts,
         })
+    }
+
+    /// 计算当前轮次的冷却时间
+    ///
+    /// 当剩余轮次接近锁定阈值（再尝试 1~2 次可能触发锁定）时冷却翻倍，
+    /// 为账户锁计数器争取更多重置窗口，降低误锁风险。
+    fn current_cooldown(&self, round: usize) -> u64 {
+        let threshold = self.config.lock_threshold.max(1);
+        if round + 2 >= threshold {
+            self.config.cooldown_secs.saturating_mul(2)
+        } else {
+            self.config.cooldown_secs
+        }
     }
 
     /// 获取配置引用

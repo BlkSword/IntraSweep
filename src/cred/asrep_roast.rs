@@ -302,7 +302,9 @@ fn parse_as_rep(data: &[u8], domain: &str, username: &str) -> Result<(i32, Vec<u
 
     // 查找enc-part [3] (0xA3)
     if let Some(pos) = data.windows(3).position(|w| w[0] == 0xA3) {
-        let inner = &data[pos + 3..];
+        // 0xA3 后跟长度字节（短格式 1 字节），内容从 pos+2 开始；
+        // 此前误用 pos+3 会跳过紧随的 etype [0](0xA0) 标签导致 etype 解析失败
+        let inner = &data[pos + 2..];
 
         // 查找etype [0] INTEGER
         if let Some(epos) = inner.windows(3).position(|w| w[0] == 0xA0 && w[2] == 0x02) {

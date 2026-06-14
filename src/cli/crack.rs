@@ -20,7 +20,20 @@ pub fn run_crack_cmd(
     concurrency: usize,
     timeout: u64,
     delay: Option<u64>,
+    spray: bool,
 ) -> Result<()> {
+    // 密码喷射模式：对支持快速认证测试的服务走 SprayEngine（少量密码 × 大量用户）
+    if spray {
+        let supported = service
+            .as_deref()
+            .map(|s| matches!(s.to_lowercase().as_str(), "ssh"))
+            .unwrap_or(false);
+        if supported {
+            return run_spray(target, port, service.unwrap(), usernames, username_file, password_file);
+        }
+        print_info("密码喷射当前仅支持 SSH（WinRM 等快速认证测试未实现），回退到普通爆破模式");
+    }
+
     match target {
         Some(target) => run_crack(
             target,
@@ -44,6 +57,119 @@ pub fn run_crack_cmd(
             delay,
         ),
     }
+}
+
+/// 运行密码喷射（SSH）
+///
+/// 使用少量高价值密码对大量用户名轮次尝试，轮次间冷却以防账户锁定。
+fn run_spray(
+    target: Option<String>,
+    port: Option<u16>,
+    service: String,
+    usernames: Option<String>,
+    username_file: Option<String>,
+    _password_file: Option<String>,
+) -> Result<()> {
+    use crate::cracker::spray::{SprayConfig, SprayEngine};
+
+    let target = match target {
+        Some(t) => t,
+        None => {
+            print_error("密码喷射需要指定目标主机");
+            return Ok(());
+        }
+    };
+
+    let service_type = match service.to_lowercase().as_str() {
+        "ssh" => CrackService::Ssh,
+        other => {
+            print_error(&format!("密码喷射不支持服务: {}", other));
+            return Ok(());
+        }
+    };
+
+    // 解析用户名列表
+    let mut dict = DictManager::new();
+    if let Some(uf) = username_file {
+        if let Err(e) = dict.load_usernames_from_file(&uf) {
+            print_error(&format!("加载用户名字典失败: {}", e));
+            return Err(FlyWheelError::Other {
+                message: "加载用户名字典失败".to_string(),
+            });
+        }
+    } else if let Some(u) = usernames {
+        let list: Vec<String> = u
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        dict.set_usernames(list);
+    }
+
+    let user_list = dict.usernames().to_vec();
+    if user_list.is_empty() {
+        print_error("密码喷射需要用户名列表（--usernames 或 --username-file）");
+        return Ok(());
+    }
+
+    // 喷射密码：少量高价值密码（满足常见复杂度策略）
+    let spray_passwords = vec![
+        "P@ssw0rd".to_string(),
+        "Password123!".to_string(),
+        "Welcome2024!".to_string(),
+        "Admin@123".to_string(),
+        "1qaz@WSX".to_string(),
+    ];
+
+    let mut config = SprayConfig::new(&target, service_type);
+    if let Some(p) = port {
+        config = config.with_port(p);
+    }
+    config = config
+        .with_usernames(user_list.clone())
+        .with_passwords(spray_passwords.clone())
+        .with_cooldown(30)
+        .with_lock_threshold(5);
+
+    println!();
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("  密码喷射 (Password Spray)");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("  目标:     {}:{}", config.target, config.port);
+    println!("  服务:     {}", service_type.name());
+    println!("  用户数:   {}", user_list.len());
+    println!(
+        "  密码数:   {} (每轮1个，轮间冷却 {}s)",
+        spray_passwords.len(),
+        config.cooldown_secs
+    );
+    println!("  锁阈值:   {} (接近时冷却翻倍)", config.lock_threshold);
+    println!();
+
+    let engine = SprayEngine::new(config);
+    let rt = tokio::runtime::Runtime::new()?;
+    let result = rt.block_on(engine.round_spray())?;
+
+    println!();
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("  喷射结果");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("  成功:     {} 个凭据", result.success_count);
+    println!("  总尝试:   {}", result.total_attempts);
+    println!("  失败:     {}", result.failure_count);
+    println!("  预估锁定: {}", result.estimated_lockouts);
+    println!("  耗时:     {} ms", result.elapsed_ms);
+
+    if !result.credentials.is_empty() {
+        println!();
+        print_success(&format!("命中 {} 组凭据:", result.credentials.len()));
+        for (user, pass) in &result.credentials {
+            println!("    {} : {}", user, pass);
+        }
+    }
+    println!();
+
+    Ok(())
 }
 
 /// 运行交互式爆破向导

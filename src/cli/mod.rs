@@ -8,13 +8,14 @@
 pub mod ad;
 pub mod crack;
 pub mod privesc;
+pub mod report;
 pub mod scan;
 pub mod system;
 pub mod tunnel;
 pub mod vuln;
 
 use crate::core::Result;
-use crate::output::color::{print_error, Color};
+use crate::output::color::{print_error, print_info, print_success};
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -112,12 +113,12 @@ impl InteractiveMenu {
 // CLI 定义
 // ============================================================
 
-/// IntraSweep - 内网渗透辅助工具
+/// IntraSweep — 高性能全链路内网渗透测试工具
 #[derive(Parser)]
 #[command(
     name = "intrasweep",
     author = "BlkSword",
-    version = "0.3.0",
+    version = "0.5.0",
     long_about = None,
 )]
 pub struct Cli {
@@ -143,11 +144,11 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// 系统信息收集 (缩写: s)
+    /// 系统信息收集 — OS/网络/进程/凭据/文件/域环境一键收集 (缩写: s)
     System {
-        /// 收集项目: all(a), system(sy), network(n), process(p), credential(c), file(f), domain(d)
-        #[arg(required = true)]
-        item: String,
+        /// 收集项目: all(a), system(sy), network(n), process(p), credential(c), file(f), domain(d)（留空进入交互式）
+        #[arg(value_name = "ITEM")]
+        item: Option<String>,
 
         /// 输出文件路径 (JSON格式)
         #[arg(short, long)]
@@ -158,7 +159,7 @@ pub enum Commands {
         quiet: bool,
     },
 
-    /// 扫描功能 (缩写: sc)
+    /// 网络扫描 — 主机发现/端口扫描/服务探测/Web指纹识别 (缩写: sc)
     Scan {
         /// 扫描目标 (IP/CIDR/范围) - 可选，不填则进入交互式模式
         #[arg(value_name = "TARGETS")]
@@ -185,8 +186,7 @@ pub enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// 爆破功能 (缩写: cr)
-    #[clap(about = "密码爆破功能 (缩写: cr)")]
+    /// 密码爆破/喷洒 — 8种服务(SSH/RDP/Redis/MySQL/MSSQL等)+域密码喷洒 (缩写: cr)
     Crack {
         /// 目标主机 (可选，不填则进入交互式模式)
         #[arg(value_name = "TARGET")]
@@ -196,7 +196,7 @@ pub enum Commands {
         #[arg(short, long)]
         port: Option<u16>,
 
-        /// 服务类型: ssh, rdp, redis, postgres, mongodb, mssql, mysql
+        /// 服务类型: ssh, rdp, redis, postgres, mongodb, mssql, mysql, winrm
         #[arg(short, long)]
         service: Option<String>,
 
@@ -223,11 +223,15 @@ pub enum Commands {
         /// 延迟(毫秒) (可选，用于避免触发防护)
         #[arg(short, long)]
         delay: Option<u64>,
+
+        /// 密码喷洒模式（域环境，防账户锁定）
+        #[arg(long)]
+        spray: bool,
     },
 
-    /// 隧道功能 (缩写: tu)
+    /// 内网穿透 — 正向/反向/SOCKS5/链式/HTTP/DNS隧道 (缩写: tu)
     Tunnel {
-        /// 隧道类型: forward, reverse, socks5, chain
+        /// 隧道类型: forward, reverse, socks5, chain, http, dns
         #[arg(value_name = "TYPE")]
         tunnel_type: Option<String>,
 
@@ -255,6 +259,10 @@ pub enum Commands {
         #[arg(long)]
         socks5_password: Option<String>,
 
+        /// 加密密钥（启用 XChaCha20-Poly1305 AEAD 加密）
+        #[arg(long)]
+        encryption_key: Option<String>,
+
         /// 最大并发连接
         #[arg(short, long, default_value = "100")]
         max_connections: usize,
@@ -264,8 +272,7 @@ pub enum Commands {
         timeout: u64,
     },
 
-    /// 漏洞扫描功能 (缩写: v)
-    #[clap(about = "漏洞扫描功能 (缩写: v)")]
+    /// 漏洞扫描 — 31条内置PoC + 外部YAML/JSON/脚本 + Web主动探测(SQLi/XSS/RCE) (缩写: v)
     Vuln {
         /// 扫描目标 (IP/CIDR/host:port) - 可选，不填则进入交互式模式
         #[arg(value_name = "TARGETS")]
@@ -282,6 +289,10 @@ pub enum Commands {
         /// 按类别过滤
         #[arg(long)]
         category: Option<String>,
+
+        /// 启用 Web 主动探测（SQLi/XSS/命令注入/路径穿越）
+        #[arg(long)]
+        web_probe: bool,
 
         /// 输出格式: json, csv (默认: json)
         #[arg(long, default_value = "json")]
@@ -300,8 +311,7 @@ pub enum Commands {
         timeout: u64,
     },
 
-    /// AD 域深度枚举 (缩写: ad)
-    #[clap(about = "AD 域深度枚举 (缩写: ad)")]
+    /// AD域枚举 — LDAP查询/Kerberoasting/AS-REP/GoldenTicket/DCSync/BloodHound/ADCS (缩写: ad)
     Ad {
         /// 域控 IP 地址 - 可选，不填则进入交互式模式
         #[arg(short, long)]
@@ -323,13 +333,21 @@ pub enum Commands {
         #[arg(long)]
         ssl: bool,
 
-        /// 执行模式: all, kerberoast, asrep-roast, bloodhound
+        /// 执行模式: all, kerberoast, asrep-roast, bloodhound, adcs, gpp, dcsync
         #[arg(short, long, default_value = "all")]
         mode: String,
 
         /// BloodHound 输出目录 (mode=bloodhound 时使用)
         #[arg(long)]
         bloodhound_dir: Option<PathBuf>,
+
+        /// Golden Ticket 模式（需同时指定 --krbtgt-hash）
+        #[arg(long)]
+        golden_ticket: bool,
+
+        /// krbtgt NTLM 哈希（用于 Golden Ticket）
+        #[arg(long)]
+        krbtgt_hash: Option<String>,
 
         /// 输出格式: json, csv (默认: json)
         #[arg(long, default_value = "json")]
@@ -340,16 +358,34 @@ pub enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// 提权检测功能 (缩写: p)
-    #[clap(about = "提权检测功能 (缩写: p)")]
+    /// 提权检测 — Windows 7类/Linux 8类自动化提权向量检查 (缩写: p)
     Privesc {
-        /// 检查类别: all, service, credentials, registry, tokens, files, patches, suid, capabilities, cron, sudo, docker, ssh, kernel
+        /// 检查类别（留空运行全部）: service, credentials, registry, tokens, files, patches, dll, suid, capabilities, cron, writable, docker, sudo, ssh, kernel
         #[arg(short, long)]
         check: Option<String>,
 
         /// 输出格式: json, csv (默认: json)
         #[arg(long, default_value = "json")]
         format: String,
+
+        /// 输出文件路径
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
+    /// 渗透报告生成 — 执行摘要/完整Markdown/HTML + MITRE ATT&CK映射 + 自定义JSON输入 (缩写: rp)
+    Report {
+        /// 报告格式: executive, full, html
+        #[arg(long, default_value = "full")]
+        format: String,
+
+        /// 输入数据文件（JSON格式，含AD/扫描/凭据结果）
+        #[arg(long)]
+        input: Option<PathBuf>,
+
+        /// 包含 MITRE ATT&CK 映射
+        #[arg(long)]
+        mitre: bool,
 
         /// 输出文件路径
         #[arg(short, long)]
@@ -381,6 +417,8 @@ pub(crate) const TUNNEL_TYPES: &[(&str, &str)] = &[
     ("reverse", "re"),
     ("socks5", "so"),
     ("chain", "ch"),
+    ("http", "ht"),
+    ("dns", "dn"),
 ];
 
 // ============================================================
@@ -409,6 +447,17 @@ pub(crate) fn parse_scan_type(scan_type: &str) -> Option<&'static str> {
     None
 }
 
+/// 解析 tunnel 子命令
+pub(crate) fn parse_tunnel_type(t: &str) -> Option<&'static str> {
+    let t_lower = t.to_lowercase();
+    for &(full, abbr) in TUNNEL_TYPES {
+        if t_lower == full || t_lower == abbr {
+            return Some(full);
+        }
+    }
+    None
+}
+
 /// 打印所有可用的 system 子命令
 pub(crate) fn print_system_items() {
     println!("可用的收集项目:");
@@ -421,6 +470,14 @@ pub(crate) fn print_system_items() {
 pub(crate) fn print_scan_types() {
     println!("可用的扫描类型:");
     for (full, abbr) in SCAN_TYPES {
+        println!("  {} ({})", full, abbr);
+    }
+}
+
+/// 打印所有可用的 tunnel 类型
+pub(crate) fn print_tunnel_types() {
+    println!("可用的隧道类型:");
+    for (full, abbr) in TUNNEL_TYPES {
         println!("  {} ({})", full, abbr);
     }
 }
@@ -461,29 +518,29 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
 }
 
 /// 彩色化文本
-pub(crate) fn colorize(text: &str, color: Color) -> String {
+pub(crate) fn colorize(text: &str, color: crate::output::color::Color) -> String {
     use termcolor::{Color as TermColor, ColorSpec, WriteColor};
 
     let mut buffer = Vec::new();
     let mut writer = termcolor::Ansi::new(&mut buffer);
 
     let term_color = match color {
-        Color::Black => TermColor::Black,
-        Color::Red => TermColor::Red,
-        Color::Green => TermColor::Green,
-        Color::Yellow => TermColor::Yellow,
-        Color::Blue => TermColor::Blue,
-        Color::Magenta => TermColor::Magenta,
-        Color::Cyan => TermColor::Cyan,
-        Color::White => TermColor::White,
-        Color::BrightBlack => TermColor::Ansi256(8),
-        Color::BrightRed => TermColor::Ansi256(9),
-        Color::BrightGreen => TermColor::Ansi256(10),
-        Color::BrightYellow => TermColor::Ansi256(11),
-        Color::BrightBlue => TermColor::Ansi256(12),
-        Color::BrightMagenta => TermColor::Ansi256(13),
-        Color::BrightCyan => TermColor::Ansi256(14),
-        Color::BrightWhite => TermColor::Ansi256(15),
+        crate::output::color::Color::Black => TermColor::Black,
+        crate::output::color::Color::Red => TermColor::Red,
+        crate::output::color::Color::Green => TermColor::Green,
+        crate::output::color::Color::Yellow => TermColor::Yellow,
+        crate::output::color::Color::Blue => TermColor::Blue,
+        crate::output::color::Color::Magenta => TermColor::Magenta,
+        crate::output::color::Color::Cyan => TermColor::Cyan,
+        crate::output::color::Color::White => TermColor::White,
+        crate::output::color::Color::BrightBlack => TermColor::Ansi256(8),
+        crate::output::color::Color::BrightRed => TermColor::Ansi256(9),
+        crate::output::color::Color::BrightGreen => TermColor::Ansi256(10),
+        crate::output::color::Color::BrightYellow => TermColor::Ansi256(11),
+        crate::output::color::Color::BrightBlue => TermColor::Ansi256(12),
+        crate::output::color::Color::BrightMagenta => TermColor::Ansi256(13),
+        crate::output::color::Color::BrightCyan => TermColor::Ansi256(14),
+        crate::output::color::Color::BrightWhite => TermColor::Ansi256(15),
     };
 
     writer

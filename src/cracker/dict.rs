@@ -56,6 +56,19 @@ impl DictManager {
             "mongodb".to_string(),
             "redis".to_string(),
             "sa".to_string(),
+            // 常见服务/应用账户
+            "service".to_string(),
+            "operator".to_string(),
+            "tomcat".to_string(),
+            "grafana".to_string(),
+            "jenkins".to_string(),
+            "nginx".to_string(),
+            "www".to_string(),
+            "www-data".to_string(),
+            "es".to_string(),
+            "kibana".to_string(),
+            "git".to_string(),
+            "prometheus".to_string(),
         ]
     }
 
@@ -74,6 +87,25 @@ impl DictManager {
             "qwerty".to_string(),
             "1q2w3e".to_string(),
             "123123".to_string(),
+            // 满足常见复杂度策略的弱口令（大小写+数字+符号）
+            "P@ssw0rd".to_string(),
+            "Admin@123".to_string(),
+            "Password123!".to_string(),
+            "Qwerty123".to_string(),
+            "1qaz@WSX".to_string(),
+            "Welcome1".to_string(),
+            "Welcome2024".to_string(),
+            "Welcome2024!".to_string(),
+            "Passw0rd!".to_string(),
+            "Admin123".to_string(),
+            "Admin1234".to_string(),
+            "changeme".to_string(),
+            "toor".to_string(),
+            "abc123".to_string(),
+            "letmein".to_string(),
+            "1234567890".to_string(),
+            "root123".to_string(),
+            "admin123".to_string(),
         ]
     }
 

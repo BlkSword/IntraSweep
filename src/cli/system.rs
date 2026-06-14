@@ -2,7 +2,7 @@
 //!
 //! 处理 system 子命令的各类信息收集功能
 
-use crate::cli::{colorize, format_bytes, parse_system_item, print_system_items, save_scan_result};
+use crate::cli::{colorize, format_bytes, parse_system_item, print_banner, print_system_items, save_scan_result, InteractiveMenu};
 use crate::collector::models::*;
 use crate::collector::InfoCollector;
 use crate::core::Result;
@@ -14,8 +14,22 @@ use crate::scanner::Scanner;
 use std::path::PathBuf;
 
 /// 系统信息收集命令入口
-pub fn run_system(item: &str, output: Option<PathBuf>, quiet: bool) -> Result<()> {
-    match parse_system_item(item) {
+pub fn run_system(item: &Option<String>, output: Option<PathBuf>, quiet: bool) -> Result<()> {
+    // 无参数时进入交互式
+    let item_str = match item {
+        Some(i) => i.clone(),
+        None => {
+            print_banner();
+            print_info("IntraSweep 交互式系统信息收集");
+            println!();
+            print_system_items();
+            let choice = InteractiveMenu::read_number_opt("请选择收集项目 [1-7, 默认 1(all)]: ", 1, 7, 1);
+            let items: [&str; 7] = ["all", "system", "network", "process", "credential", "file", "domain"];
+            items[choice - 1].to_string()
+        }
+    };
+
+    match parse_system_item(&item_str) {
         Some("all") => run_system_collect_all(output, quiet),
         Some("system") => run_system_collect_basic(output, quiet),
         Some("network") => run_system_collect_network(output, quiet),
@@ -24,7 +38,7 @@ pub fn run_system(item: &str, output: Option<PathBuf>, quiet: bool) -> Result<()
         Some("file") => run_system_collect_file(output, quiet),
         Some("domain") => run_domain_scan(output),
         _ => {
-            print_error(&format!("未知的收集项目: {}", item));
+            print_error(&format!("未知的收集项目: {}", item_str));
             print_system_items();
             std::process::exit(1);
         }
@@ -209,12 +223,19 @@ fn run_system_collect_credential(output: Option<PathBuf>, _quiet: bool) -> Resul
 
     pb.set_message("正在搜索令牌...");
     credential.tokens = collector.collect_tokens();
+    credential.tokens.extend(collector.collect_env_secrets());
 
     pb.set_message("正在搜索SSH密钥...");
     credential.ssh_keys = collector.collect_ssh_keys();
 
     pb.set_message("正在搜索API密钥...");
     credential.api_keys = collector.collect_api_keys();
+
+    pb.set_message("正在搜索远程连接历史...");
+    credential.known_hosts = collector.collect_known_hosts();
+    let mut remote_sessions = collector.collect_putty_sessions();
+    remote_sessions.extend(collector.collect_rdp_history());
+    credential.remote_sessions = remote_sessions;
 
     pb.set_message("正在更新统计信息...");
     credential.update_stats();
@@ -458,6 +479,8 @@ fn print_credential_info(credential: &CredentialReport) {
     println!("║  SSH密钥:    {:<60}║", credential.stats.ssh_key_count);
     println!("║  API密钥:    {:<60}║", credential.stats.api_key_count);
     println!("║  Token总数:  {:<60}║", credential.stats.token_count);
+    println!("║  已连主机:   {:<60}║", credential.stats.known_host_count);
+    println!("║  远程会话:   {:<60}║", credential.stats.remote_session_count);
     println!("╚════════════════════════════════════════════════════════════════════════════╝");
     println!();
 }

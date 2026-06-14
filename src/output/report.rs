@@ -529,7 +529,7 @@ mod tests {
         let html = ReportGenerator::generate_html_report(&report);
         assert!(html.contains("<!DOCTYPE html>"));
         assert!(html.contains("CORP.LOCAL"));
-        assert!(html.contains("css"));
+        assert!(html.contains("<style>"));
     }
 
     #[test]

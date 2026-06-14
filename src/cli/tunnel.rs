@@ -20,6 +20,7 @@ pub fn run_tunnel_cmd(
     socks5_password: Option<String>,
     max_connections: usize,
     timeout: u64,
+    _encryption_key: Option<String>,
 ) -> Result<()> {
     match tunnel_type {
         Some(tunnel_type) => run_tunnel(

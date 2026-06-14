@@ -15,6 +15,7 @@ pub fn run_vuln_cmd(
     output: Option<PathBuf>,
     concurrency: usize,
     timeout: u64,
+    _web_probe: bool,
 ) -> Result<()> {
     let output_fmt = OutputFormat::parse(format)
         .unwrap_or(OutputFormat::Json);

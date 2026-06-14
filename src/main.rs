@@ -8,9 +8,11 @@ mod cli;
 mod collector;
 mod core;
 mod cracker;
+mod cred;
 mod modules;
 mod output;
 mod privesc;
+mod recon;
 mod scanner;
 mod tunnel;
 mod vuln;
@@ -54,35 +56,42 @@ fn main() {
         }
 
         Commands::Crack { target, port, service, usernames, password_file,
-                          username_file, concurrency, timeout, delay } => {
+                          username_file, concurrency, timeout, delay, spray } => {
             cli::crack::run_crack_cmd(target, port, service, usernames,
                                       password_file, username_file,
-                                      concurrency, timeout, delay)
+                                      concurrency, timeout, delay, spray)
         }
 
         Commands::Tunnel { tunnel_type, target, local_port, remote_port,
                            hop, socks5_username, socks5_password,
-                           max_connections, timeout } => {
+                           max_connections, timeout, encryption_key } => {
             let _cfg = &app_config;
             cli::tunnel::run_tunnel_cmd(tunnel_type, target, local_port,
                                        remote_port, hop, socks5_username,
-                                       socks5_password, max_connections, timeout)
+                                       socks5_password, max_connections, timeout,
+                                       encryption_key)
         }
 
         Commands::Vuln { targets, poc_file, severity, category,
-                         format, output, concurrency, timeout } => {
+                         format, output, concurrency, timeout, web_probe } => {
             cli::vuln::run_vuln_cmd(targets, poc_file, severity, category,
-                                    &format, output, concurrency, timeout)
+                                    &format, output, concurrency, timeout, web_probe)
         }
 
         Commands::Ad { dc, domain, username, password, ssl, mode,
-                       bloodhound_dir, format, output } => {
+                       bloodhound_dir, format, output,
+                       golden_ticket, krbtgt_hash } => {
             cli::ad::run_ad_cmd(dc, domain, username, password, ssl,
-                               mode, bloodhound_dir, &format, output)
+                               mode, bloodhound_dir, &format, output,
+                               golden_ticket, krbtgt_hash)
         }
 
         Commands::Privesc { check, format, output } => {
             cli::privesc::run_privesc_cmd(check, &format, output)
+        }
+
+        Commands::Report { format, input, mitre, output } => {
+            cli::report::run_report_cmd(format, mitre, output, input)
         }
     };
 

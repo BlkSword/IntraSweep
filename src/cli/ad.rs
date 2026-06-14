@@ -17,6 +17,8 @@ pub fn run_ad_cmd(
     bloodhound_dir: Option<PathBuf>,
     format: &str,
     output: Option<PathBuf>,
+    _golden_ticket: bool,
+    _krbtgt_hash: Option<String>,
 ) -> Result<()> {
     let output_fmt = OutputFormat::parse(format)
         .unwrap_or(OutputFormat::Json);

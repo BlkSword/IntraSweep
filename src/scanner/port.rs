@@ -18,6 +18,13 @@ use tokio::time::timeout;
 /// 进度回调函数类型
 pub type ProgressCallback = Arc<dyn Fn(usize, usize) + Send + Sync>;
 
+/// 单批端口扫描的统计，供自适应超时参考
+struct BatchStats {
+    total: usize,
+    open: usize,
+    filtered: usize,
+}
+
 /// 端口扫描器
 pub struct PortScanner {
     config: ScanConfig,
@@ -50,6 +57,9 @@ impl PortScanner {
     }
 
     /// 扫描单个主机的多个端口
+    ///
+    /// 提速策略：常见端口用更短超时；按每批 filtered 比例自适应收紧/放宽超时，
+    /// 在防火墙严格（filtered 居多）的网段加速放弃超时端口。
     pub async fn scan_host_ports(&self, host: IpAddr, ports: Vec<u16>) -> HostResult {
         let start_time = Instant::now();
         let mut open_ports = Vec::new();
@@ -57,10 +67,24 @@ impl PortScanner {
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent_ports));
         let mut tasks = Vec::new();
 
+        // 超时分级：常见端口短超时（高频端口多为开放或快速 RST）
+        let base_timeout = Duration::from_millis(self.config.port_timeout_ms);
+        let common_timeout = Duration::from_millis(
+            self.config.common_port_timeout_ms.min(self.config.port_timeout_ms),
+        );
+        let min_timeout = common_timeout; // 自适应超时下限，避免无限收紧
+        let mut adaptive_timeout = base_timeout;
+        let batch_size = self.config.calculate_batch_size();
+
         for port in ports {
             let semaphore = semaphore.clone();
             let host_copy = host;
-            let timeout_dur = Duration::from_millis(self.config.port_timeout_ms);
+            // 常见端口走短超时（不超过当前自适应上限），其余端口走自适应超时
+            let timeout_dur = if self.is_common_port(port) {
+                common_timeout.min(adaptive_timeout)
+            } else {
+                adaptive_timeout
+            };
 
             let task = tokio::spawn(async move {
                 Self::scan_single_port(host_copy, port, timeout_dur, semaphore).await
@@ -68,10 +92,12 @@ impl PortScanner {
 
             tasks.push(task);
 
-            // 批处理：控制同时运行的任务数
-            if tasks.len() >= self.config.calculate_batch_size() {
-                let results = self.wait_for_port_batch(&mut tasks).await;
+            // 批处理：攒够一批后统一收集，并据此自适应调整下一批超时
+            if tasks.len() >= batch_size {
+                let (results, stats) = Self::collect_port_batch(&mut tasks).await;
                 open_ports.extend(results);
+                adaptive_timeout =
+                    Self::adjust_timeout(adaptive_timeout, base_timeout, min_timeout, &stats);
             }
 
             // 扫描延迟（隐蔽模式）
@@ -82,7 +108,7 @@ impl PortScanner {
 
         // 等待剩余任务完成
         while !tasks.is_empty() {
-            let results = self.wait_for_port_batch(&mut tasks).await;
+            let (results, _) = Self::collect_port_batch(&mut tasks).await;
             open_ports.extend(results);
         }
 
@@ -105,6 +131,30 @@ impl PortScanner {
             open_ports,
             services,
             web_fingerprints: vec![],
+        }
+    }
+
+    /// 根据本批 filtered 比例调整自适应超时
+    ///
+    /// - filtered > 50%（防火墙 drop 居多）→ 收紧超时，加速放弃超时端口
+    /// - filtered < 20%（网络通透）→ 放回基础超时，减少慢响应开放端口的漏报
+    fn adjust_timeout(
+        current: Duration,
+        base: Duration,
+        min: Duration,
+        stats: &BatchStats,
+    ) -> Duration {
+        if stats.total == 0 {
+            return current;
+        }
+        let filtered_ratio = stats.filtered as f64 / stats.total as f64;
+        if filtered_ratio > 0.5 {
+            let next = current.as_millis() as u64 * 3 / 4;
+            Duration::from_millis(next.max(min.as_millis() as u64))
+        } else if filtered_ratio < 0.2 {
+            base
+        } else {
+            current
         }
     }
 
@@ -199,24 +249,34 @@ impl PortScanner {
         }
     }
 
-    /// 等待一批端口扫描任务完成
-    async fn wait_for_port_batch(
-        &self,
+    /// 收集一批端口扫描任务的结果，并统计 open/filtered 数量（供自适应超时参考）
+    ///
+    /// 结果仅保留开放端口（与历史行为一致），统计信息用于动态调整后续批次超时。
+    async fn collect_port_batch(
         tasks: &mut Vec<tokio::task::JoinHandle<PortInfo>>,
-    ) -> Vec<PortInfo> {
-        let mut results = Vec::new();
+    ) -> (Vec<PortInfo>, BatchStats) {
+        let mut open_ports = Vec::new();
+        let mut stats = BatchStats {
+            total: 0,
+            open: 0,
+            filtered: 0,
+        };
 
-        // 等待所有任务完成
         for task in tasks.drain(..) {
             if let Ok(result) = task.await {
-                // 只返回开放端口
-                if result.state == PortState::Open {
-                    results.push(result);
+                stats.total += 1;
+                match result.state {
+                    PortState::Open => {
+                        stats.open += 1;
+                        open_ports.push(result);
+                    }
+                    PortState::Filtered => stats.filtered += 1,
+                    _ => {}
                 }
             }
         }
 
-        results
+        (open_ports, stats)
     }
 
     /// 扫描多个主机的常见端口

@@ -246,11 +246,13 @@ impl ReconReport {
             ));
         }
 
-        if !self.security_products.is_empty() {
-            findings.push(format!(
-                "🛡️ 检测到 {} 个安全产品 — 需规避",
+        if self.stats.security_products > 0 || !self.security_products.is_empty() {
+            let count = if self.stats.security_products > 0 {
+                self.stats.security_products
+            } else {
                 self.security_products.len()
-            ));
+            };
+            findings.push(format!("🛡️ 检测到 {} 个安全产品 — 需规避", count));
         }
 
         if self.stats.potential_vulnerabilities > 0 {

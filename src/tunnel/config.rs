@@ -75,8 +75,6 @@ pub struct TunnelConfig {
     pub socks5_password: Option<String>,
     /// 加密密钥（可选，设置后启用 XChaCha20-Poly1305 加密）
     pub encryption_key: Option<String>,
-    /// 启用多路复用
-    pub enable_mux: bool,
 }
 
 impl TunnelConfig {
@@ -93,7 +91,6 @@ impl TunnelConfig {
             socks5_username: None,
             socks5_password: None,
             encryption_key: None,
-            enable_mux: false,
         }
     }
 
@@ -131,12 +128,6 @@ impl TunnelConfig {
     /// 设置加密密钥（启用 XChaCha20-Poly1305 加密）
     pub fn with_encryption_key(mut self, key: String) -> Self {
         self.encryption_key = Some(key);
-        self
-    }
-
-    /// 启用多路复用
-    pub fn with_mux(mut self, enabled: bool) -> Self {
-        self.enable_mux = enabled;
         self
     }
 

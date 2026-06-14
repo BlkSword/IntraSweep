@@ -131,6 +131,8 @@ impl Socks5Server {
                     self.event_handler.on_event(TunnelEvent::Error {
                         message: format!("接受连接失败: {}", e),
                     });
+                    // listener 异常时退避，避免错误风暴下 CPU 空转
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                 }
             }
         }
@@ -167,11 +169,11 @@ impl Socks5Server {
 
         match result {
             Ok(target_addr) => {
-                // 连接到目标
+                // 连接到目标（带瞬时错误重试）
                 let timeout_dur = Duration::from_secs(config.timeout_secs);
 
-                match timeout(timeout_dur, TcpStream::connect(&target_addr)).await {
-                    Ok(Ok(target_stream)) => {
+                match Self::connect_with_retry(&target_addr, timeout_dur).await {
+                    Ok(target_stream) => {
                         // 双向转发
                         let stats = relay::relay(client, target_stream).await;
 
@@ -187,18 +189,9 @@ impl Socks5Server {
                             received: stats.received,
                         });
                     }
-                    Ok(Err(e)) => {
+                    Err(e) => {
                         event_handler.on_event(TunnelEvent::Error {
                             message: format!("连接目标 {} 失败: {}", target_addr, e),
-                        });
-                        {
-                            let mut st = status.write().await;
-                            st.remove_connection(&conn_id);
-                        }
-                    }
-                    Err(_) => {
-                        event_handler.on_event(TunnelEvent::Error {
-                            message: format!("连接目标 {} 超时", target_addr),
                         });
                         {
                             let mut st = status.write().await;
@@ -221,6 +214,54 @@ impl Socks5Server {
         event_handler.on_event(TunnelEvent::Disconnected {
             id: conn_id.clone(),
         });
+    }
+
+    /// 连接目标地址，对超时/连接重置等瞬时错误进行有限重试
+    ///
+    /// 连接被拒绝（目标无服务）通常是确定性的，不重试；仅对可能因网络抖动
+    /// 产生的瞬时错误重试最多 MAX_RETRIES 次，提升不稳定链路上的隧道可用性。
+    async fn connect_with_retry(
+        target_addr: &str,
+        timeout_dur: Duration,
+    ) -> std::io::Result<TcpStream> {
+        const MAX_RETRIES: usize = 2;
+        for attempt in 0..=MAX_RETRIES {
+            match timeout(timeout_dur, TcpStream::connect(target_addr)).await {
+                Ok(Ok(stream)) => return Ok(stream),
+                Ok(Err(e)) => {
+                    if attempt < MAX_RETRIES && is_transient_io(&e) {
+                        tracing::warn!(
+                            "[SOCKS5] 连接目标 {} 失败({}), 重试 {}/{}",
+                            target_addr,
+                            e,
+                            attempt + 1,
+                            MAX_RETRIES
+                        );
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Err(_) => {
+                    if attempt < MAX_RETRIES {
+                        tracing::warn!(
+                            "[SOCKS5] 连接目标 {} 超时, 重试 {}/{}",
+                            target_addr,
+                            attempt + 1,
+                            MAX_RETRIES
+                        );
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        continue;
+                    }
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "连接目标超时",
+                    ));
+                }
+            }
+        }
+        // 循环正常会在上面的 return 退出，兜底
+        Err(std::io::Error::new(std::io::ErrorKind::Other, "重试耗尽"))
     }
 
     /// SOCKS5 握手协议
@@ -468,6 +509,8 @@ impl Socks5Server {
                             self.event_handler.on_event(TunnelEvent::Error {
                                 message: format!("接受连接失败: {}", e),
                             });
+                            // listener 异常时退避，避免错误风暴下 CPU 空转
+                            tokio::time::sleep(Duration::from_millis(500)).await;
                         }
                     }
                 }
@@ -482,4 +525,20 @@ impl Socks5Server {
         Ok(())
     }
 
+}
+
+/// 判断 IO 错误是否为瞬时错误（值得重试）
+///
+/// 连接被拒绝（目标无服务）通常是确定性的，不重试；其余瞬时错误可重试。
+fn is_transient_io(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind;
+    matches!(
+        e.kind(),
+        ErrorKind::TimedOut
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::Interrupted
+            | ErrorKind::UnexpectedEof
+            | ErrorKind::WouldBlock
+    )
 }

@@ -11,5 +11,5 @@ pub mod file;
 pub use system::{SystemCollector, SystemInfo};
 pub use network::{NetworkCollector, NetworkInterface, RouteEntry, ArpEntry, NetworkConnection};
 pub use process::{ProcessCollector, ProcessInfo};
-pub use credential::{CredentialCollector, HashEntry, Token, SshKey, ApiKey};
+pub use credential::{CredentialCollector, HashEntry, Token, SshKey, ApiKey, KnownHost, RemoteSession};
 pub use file::{FileCollector, SensitiveFile, ConfigFile};
