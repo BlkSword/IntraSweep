@@ -113,7 +113,7 @@ impl InteractiveMenu {
 // CLI 定义
 // ============================================================
 
-/// IntraSweep — 高性能全链路内网渗透测试工具
+/// IntraSweep — 高性能内网渗透侦察与打击工具
 #[derive(Parser)]
 #[command(
     name = "intrasweep",

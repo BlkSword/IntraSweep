@@ -424,6 +424,21 @@ fn run_interactive_crack(
         return Ok(());
     }
 
+    // 密码喷洒模式（仅 SSH：少量密码 × 大量用户，轮间冷却防账户锁定）
+    if service.to_lowercase() == "ssh" {
+        let spray = InteractiveMenu::read_input("使用密码喷洒模式?（SSH，防账户锁定）[y/N]: ");
+        if spray.to_lowercase() == "y" {
+            return run_spray(
+                Some(target),
+                Some(port),
+                service,
+                usernames,
+                username_file,
+                password_file,
+            );
+        }
+    }
+
     // 调用 run_crack 执行爆破
     run_crack(
         target,
